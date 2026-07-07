@@ -101,6 +101,53 @@ func TestPredictNullFields(t *testing.T) {
 	}
 }
 
+func TestPredictPreservesLabelOrder(t *testing.T) {
+	// The response sentence depends on label order, so it must be preserved
+	// from the raw JSON regardless of Go map randomization.
+	rawJSON := `{"image": null, "roundness": 0.5, "labels": {"bread": 0.87, "no_seeds": 0.76, "round": 0.72, "raised": 0.69}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(rawJSON))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	res, err := c.Predict(context.Background(), []byte("x"))
+	if err != nil {
+		t.Fatalf("Predict: %v", err)
+	}
+	want := []string{"bread", "no_seeds", "round", "raised"}
+	if len(res.LabelsOrder) != len(want) {
+		t.Fatalf("LabelsOrder = %v, want %v", res.LabelsOrder, want)
+	}
+	for i, w := range want {
+		if res.LabelsOrder[i] != w {
+			t.Errorf("LabelsOrder[%d] = %q, want %q", i, res.LabelsOrder[i], w)
+		}
+	}
+	ordered := res.OrderedLabels()
+	if len(ordered) != 4 || ordered[0].Name != "bread" || ordered[0].Confidence != 0.87 {
+		t.Errorf("OrderedLabels() = %+v", ordered)
+	}
+}
+
+func TestPredictNullLabelsNoOrder(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"image": null, "roundness": null, "labels": null}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL)
+	res, err := c.Predict(context.Background(), []byte("x"))
+	if err != nil {
+		t.Fatalf("Predict: %v", err)
+	}
+	if res.LabelsOrder != nil {
+		t.Errorf("LabelsOrder = %v, want nil", res.LabelsOrder)
+	}
+	if len(res.OrderedLabels()) != 0 {
+		t.Errorf("OrderedLabels should be empty")
+	}
+}
+
 func TestPredictFile(t *testing.T) {
 	raw := []byte("file-bytes-here")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

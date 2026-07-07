@@ -41,10 +41,122 @@ func NewClient(baseURL string) *Client {
 // PredictResponse is the microservice response. All fields are optional: image
 // is a base64-encoded annotated image, roundness is a fraction, labels maps
 // label name to confidence.
+//
+// LabelsOrder preserves the order labels appear in the JSON. The Python
+// implementation iterates labels in dict (== JSON) order when building the
+// response sentence, so order is behaviorally significant; a plain Go map would
+// randomize it.
 type PredictResponse struct {
-	Image     *string            `json:"image"`
-	Roundness *float64           `json:"roundness"`
-	Labels    map[string]float64 `json:"labels"`
+	Image       *string            `json:"image"`
+	Roundness   *float64           `json:"roundness"`
+	Labels      map[string]float64 `json:"labels"`
+	LabelsOrder []string           `json:"-"`
+}
+
+// UnmarshalJSON decodes the response and additionally records the label key
+// order as it appears in the raw JSON (json.Decoder token stream).
+func (r *PredictResponse) UnmarshalJSON(data []byte) error {
+	// Decode the standard fields via an alias to avoid recursion.
+	type alias PredictResponse
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*r = PredictResponse(a)
+
+	// Extract label order from the raw JSON.
+	order, err := labelKeyOrder(data)
+	if err != nil {
+		return err
+	}
+	r.LabelsOrder = order
+	return nil
+}
+
+// labelKeyOrder returns the keys of the top-level "labels" object in the order
+// they appear in data. Returns nil if labels is absent or null.
+func labelKeyOrder(data []byte) ([]string, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, err
+	}
+	raw, ok := top["labels"]
+	if !ok {
+		return nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	// null labels → no order.
+	if tok == nil {
+		return nil, nil
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok || delim != '{' {
+		return nil, nil
+	}
+	var order []string
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return nil, nil
+		}
+		order = append(order, key)
+		// Skip the value.
+		if err := skipValue(dec); err != nil {
+			return nil, err
+		}
+	}
+	return order, nil
+}
+
+// skipValue consumes one JSON value (which for label values is always a scalar,
+// but handle nested containers defensively) from the decoder.
+func skipValue(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := tok.(json.Delim); ok && (delim == '{' || delim == '[') {
+		depth := 1
+		for depth > 0 {
+			t, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if d, ok := t.(json.Delim); ok {
+				if d == '{' || d == '[' {
+					depth++
+				} else {
+					depth--
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// OrderedLabel is a label/confidence pair in JSON order.
+type OrderedLabel struct {
+	Name       string
+	Confidence float64
+}
+
+// OrderedLabels returns the labels in the order they appeared in the JSON
+// response, matching the Python iteration order used to build the response
+// sentence.
+func (r *PredictResponse) OrderedLabels() []OrderedLabel {
+	out := make([]OrderedLabel, 0, len(r.Labels))
+	for _, name := range r.LabelsOrder {
+		out = append(out, OrderedLabel{Name: name, Confidence: r.Labels[name]})
+	}
+	return out
 }
 
 // predictRequest is the POST body: {"image": "<base64>"}.

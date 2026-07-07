@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Tuple
 
+import discord
 from loguru import logger
 
-import discord
 from inference.predict import ImageData, InferenceClient, PredictResponse
 from settings import SETTINGS
 
@@ -11,7 +11,7 @@ from settings import SETTINGS
 class FreeMessageHandler:
     @staticmethod
     def map_confidence_to_sentiment(confidence: float, label: str) -> str:
-        """Translate a confidence percentage to a text to indicate how accurate the element is
+        """Translate a confidence percentage to text indicating how accurate the element is
 
         Args:
             confidence (float): Confidence value
@@ -21,18 +21,22 @@ class FreeMessageHandler:
             str: Value for the confidence specified
         """
         label = label.replace("_", " ")
-        if confidence < 0.5:
-            return f"{label}, H E L P, "
+        if confidence < 0.3:
+            return f"{label}, need help"
+        elif confidence < 0.4:
+            return f"not sure about {label}"
+        elif confidence < 0.5:
+            return f"{label} is unlikely"
         elif confidence < 0.6:
-            return f", just a bit {label}"
+            return f"slightly possible {label}"
         elif confidence < 0.7:
-            return f"reasonably {label}"
+            return f"moderately likely {label}"
         elif confidence < 0.8:
             return f"probably {label}"
         elif confidence < 0.9:
-            return f"fairly confident that it's {label}"
+            return f"fairly confident in {label}"
         elif confidence < 1.0:
-            return f"pretty sure it is {label}"
+            return f"pretty sure it's {label}"
         else:
             return f"Confirmed that it's {label}"
 
@@ -46,9 +50,7 @@ class FreeMessageHandler:
             if confidence >= min_confidence:
                 labeltext = (
                     labeltext
-                    + cls.map_confidence_to_sentiment(
-                        confidence=confidence, label=label
-                    )
+                    + cls.map_confidence_to_sentiment(confidence=confidence, label=label)
                     + " "
                 )
         logger.debug(labeltext)
@@ -94,9 +96,7 @@ class FreeMessageHandler:
                 return out_path, final_comment, res
             else:
                 # Bread was found but not confident enough
-                final_comment = (
-                    "This is only very mildly bread. Metaphysical bread even."
-                )
+                final_comment = "This is only very mildly bread. Metaphysical bread even."
                 return input_file, final_comment, res
         else:
             final_comment = "This isn't bread at all!"
@@ -157,8 +157,11 @@ class FreeMessageHandler:
             and message.reference.resolved
             and message.reference.resolved.author == botuser
         ):
+            logger.info("Message is not a reply to the bot")
             return False
         # Check if message includes "are you sure or similar words"
         if not any(trigger in message.content.lower() for trigger in trigger_texts):
+            logger.info("Message does not contain areyousure content")
             return False
+        logger.debug("Message passes all checks")
         return True

@@ -33,7 +33,7 @@ class PredictionError(Exception): ...
 
 class InferenceClient:
     def __init__(self, base_url: str):
-        self.client = lambda: httpx.AsyncClient(base_url=base_url)
+        self.client = lambda: httpx.AsyncClient(base_url=base_url, timeout=30)
 
     async def predict(self, payload: ImageData) -> PredictResponse:
         async with self.client() as client:

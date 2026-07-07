@@ -31,6 +31,8 @@ type Config struct {
 
 	// AdminAPIToken guards the read-only HTTP server. Empty = auth disabled.
 	AdminAPIToken string
+	// AdminAPIAddr is the listen address for the read-only HTTP server.
+	AdminAPIAddr string
 }
 
 // Load reads configuration from the environment, applying defaults that match
@@ -46,6 +48,7 @@ func Load() (*Config, error) {
 		DownloadsPath:               envStr("DOWNLOADS_PATH", "downloads/"),
 		InferenceServiceURL:         envStr("INFERENCE_SERVICE_URL", "http://localhost:8000"),
 		AdminAPIToken:               os.Getenv("ADMIN_API_TOKEN"),
+		AdminAPIAddr:                envStr("ADMIN_API_ADDR", ":8080"),
 	}
 
 	if c.DiscordToken == "" {

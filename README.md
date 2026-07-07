@@ -69,20 +69,52 @@ CGO_ENABLED=0 go build -o breadbot ./cmd/breadbot
 The pure-Go SQLite driver (`modernc.org/sqlite`) means no CGO and a fully static
 binary.
 
-## Docker
+## Container image (ko)
+
+Images are built with [ko](https://ko.build) — no Dockerfile, no docker daemon.
+Because the binary is CGO-free, ko builds a minimal static `distroless` image
+straight from the Go module (see `.ko.yaml`).
 
 ```sh
-docker build -t breadbot .
+go install github.com/google/ko@latest        # if not installed
+
+export KO_DOCKER_REPO=ghcr.io/hawawa4/breadbotdiscord
+ko build ./cmd/breadbot                        # build + push to $KO_DOCKER_REPO
+ko build --local ./cmd/breadbot                # or build into the local docker daemon
+```
+
+The **SQLite DB is not baked into the image** — it is mutable runtime state, so
+mount it as a volume and point `DB_DATA_PATH` at the mount. The schema
+auto-creates on first start, so an empty volume is fine.
+
+```sh
 docker run --rm \
   -e DISCORD_TOKEN=... \
   -e DISCORD_BREAD_CHANNELS='[123]' \
   -e DISCORD_BREAD_ROLE='[456]' \
   -e INFERENCE_SERVICE_URL=http://inference:8000 \
+  -e DB_DATA_PATH=/app/dbdata/messages.db \
+  -v "$PWD/dbdata:/app/dbdata" \
   -p 8080:8080 \
-  breadbot
+  "$(KO_DOCKER_REPO=ko.local ko build --bare ./cmd/breadbot)"
 ```
 
-The image is a multi-stage build onto `distroless/static` (small, nonroot).
+## docker-compose
+
+`docker-compose.yml` runs the bot alongside the `breadvision` inference service.
+Build the bot image with ko first (it loads into the local docker daemon), then
+bring the stack up:
+
+```sh
+cp .env.example .env      # fill in DISCORD_TOKEN etc.
+KO_DOCKER_REPO=ko.local ko build --bare -t compose ./cmd/breadbot
+docker compose up -d
+```
+
+The bot's DB persists in `./.dbdatastuff/` (bind-mounted to `/app/dbdata`), it
+reaches the inference service at `http://breadvision:8000`, and the stats API is
+exposed on `:8080`. For a registry-based deploy, set `KO_DOCKER_REPO` to your
+registry and update the `image:` reference in the compose file to the pushed tag.
 
 ## Read-only HTTP API
 

@@ -1,0 +1,27 @@
+# ko build config — https://ko.build
+#
+# ko builds an OCI image directly from the Go module (no Dockerfile, no docker
+# daemon). The binary is already CGO-free (pure-Go modernc.org/sqlite), so the
+# default static distroless base is a perfect fit.
+#
+# Usage:
+#   export KO_DOCKER_REPO=ghcr.io/hawawa4/breadbotdiscord   # your registry
+#   ko build ./cmd/breadbot                                  # build + push
+#   ko build --local ./cmd/breadbot                          # build to local docker
+#
+# The SQLite DB is NOT baked into the image — it is mutable runtime state and
+# must be mounted (e.g. -v $PWD/dbdata:/var/lib/breadbot) with DB_DATA_PATH
+# pointing at the mount. The schema auto-creates on first start.
+
+defaultBaseImage: gcr.io/distroless/static-debian12:nonroot
+
+builds:
+  - id: breadbot
+    main: ./cmd/breadbot
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w

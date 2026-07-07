@@ -219,3 +219,6 @@ output/*
 debug/
 training/
 dbdata/
+
+# docker-compose DB bind mount
+.dbdatastuff/

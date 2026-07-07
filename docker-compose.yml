@@ -1,0 +1,30 @@
+services:
+  breadbot:
+    # Built with ko (no Dockerfile). Build the locally-tagged image first:
+    #   KO_DOCKER_REPO=ko.local ko build --bare -t compose ./cmd/breadbot
+    # which loads ko.local:compose into the local docker daemon (referenced
+    # below). For a registry deploy, set KO_DOCKER_REPO to your registry and
+    # replace this with the pushed image reference that `ko build` prints.
+    image: ko.local:compose
+    env_file:
+      - .env
+    environment:
+      # DB lives on the mounted volume (not baked into the image).
+      DB_DATA_PATH: /app/dbdata/messages.db
+      # Reach the inference service by its compose service name.
+      INFERENCE_SERVICE_URL: http://breadvision:8000
+      ADMIN_API_ADDR: ":8080"
+    volumes:
+      - ./.dbdatastuff/:/app/dbdata
+    ports:
+      # Read-only stats API + /healthz.
+      - "8080:8080"
+    depends_on:
+      - breadvision
+    restart: unless-stopped
+
+  breadvision:
+    image: taruelec/breadvision:latest
+    env_file:
+      - .env
+    restart: unless-stopped

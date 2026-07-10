@@ -19,6 +19,15 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
+	slog.Info("message received",
+		"message_id", m.ID,
+		"channel", m.ChannelID,
+		"author", m.Author.Username,
+		"author_id", m.Author.ID,
+		"attachments", len(m.Attachments),
+		"content_len", len(m.Content),
+	)
+
 	b.upsertAuthor(m)
 
 	if name, args, ok := b.parseCommand(m.Content); ok {

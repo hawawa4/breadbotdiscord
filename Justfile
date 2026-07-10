@@ -34,8 +34,13 @@ build:
 image:
     KO_DOCKER_REPO=ko.local ko build --bare -t compose ./cmd/breadbot
 
+# Log in to GHCR with the gh CLI token (needs `write:packages`: run `gh auth refresh -h github.com -s write:packages`).
+login:
+    gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
+
 # Build AND publish the image to $KO_DOCKER_REPO (tags: latest + git sha).
-publish:
+# Logs in via `just login` first so ko can push.
+publish: login
     ko build --bare -t latest -t "$(git rev-parse --short HEAD)" ./cmd/breadbot
 
 # Build the compose image, then bring the stack up (bot + inference).

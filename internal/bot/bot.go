@@ -69,4 +69,11 @@ func (b *Bot) Ready() bool {
 func (b *Bot) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	b.selfID = r.User.ID
 	slog.Info("logged in", "user", r.User.String())
+	// Echo the detection config so a mis-parsed/empty channel or role list is
+	// obvious when the bot appears to ignore images.
+	slog.Info("bread detection config",
+		"bread_channels", b.cfg.DiscordBreadChannels,
+		"bread_roles", b.cfg.DiscordBreadRole,
+		"detection_confidence", b.cfg.BreadDetectionConfidence,
+	)
 }

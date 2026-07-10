@@ -212,7 +212,14 @@ func (b *Bot) reply(s *discordgo.Session, m *discordgo.MessageCreate, content st
 	content = truncateForDiscord(content)
 	if _, err := s.ChannelMessageSendReply(m.ChannelID, content, m.Reference()); err != nil {
 		slog.Error("send reply", "channel", m.ChannelID, "err", err)
+		return
 	}
+	slog.Info("replied to message",
+		"to_message_id", m.ID,
+		"channel", m.ChannelID,
+		"kind", "text",
+		"content_len", len(content),
+	)
 }
 
 // truncateForDiscord clamps s to Discord's message length limit, cutting on a

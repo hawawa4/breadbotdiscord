@@ -42,15 +42,35 @@ func (b *Bot) onPlainMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 // posted in an allowed channel, by an author with an allowed role, with at
 // least one attachment. Ports is_bread_candidate.
 func (b *Bot) isBreadCandidate(m *discordgo.MessageCreate) bool {
+	// Only bother diagnosing messages that actually carry an attachment —
+	// otherwise every plain chat line would log a rejection.
+	diag := len(m.Attachments) > 0
+
 	if !containsID(b.cfg.DiscordBreadChannels, m.ChannelID) {
+		if diag {
+			slog.Info("bread candidate rejected: channel not in DISCORD_BREAD_CHANNELS",
+				"channel", m.ChannelID, "allowed_channels", b.cfg.DiscordBreadChannels)
+		}
 		return false
 	}
-	if m.Member == nil || !hasAllowedRole(m.Member.Roles, b.cfg.DiscordBreadRole) {
+	if m.Member == nil {
+		if diag {
+			slog.Info("bread candidate rejected: message has no Member (roles unknown)",
+				"message_id", m.ID, "author", m.Author.Username)
+		}
+		return false
+	}
+	if !hasAllowedRole(m.Member.Roles, b.cfg.DiscordBreadRole) {
+		if diag {
+			slog.Info("bread candidate rejected: author lacks an allowed role",
+				"author", m.Author.Username, "author_roles", m.Member.Roles, "allowed_roles", b.cfg.DiscordBreadRole)
+		}
 		return false
 	}
 	if len(m.Attachments) == 0 {
 		return false
 	}
+	slog.Info("bread candidate accepted", "message_id", m.ID, "channel", m.ChannelID, "attachments", len(m.Attachments))
 	return true
 }
 
@@ -240,11 +260,22 @@ func (b *Bot) sendFileReply(s *discordgo.Session, target *discordgo.Message, fil
 		return nil, err
 	}
 	defer f.Close()
-	return s.ChannelMessageSendComplex(target.ChannelID, &discordgo.MessageSend{
+	sent, err := s.ChannelMessageSendComplex(target.ChannelID, &discordgo.MessageSend{
 		Content:   content,
 		Files:     []*discordgo.File{{Name: filepath.Base(filePath), Reader: f}},
 		Reference: &discordgo.MessageReference{MessageID: target.ID, ChannelID: target.ChannelID, GuildID: target.GuildID},
 	})
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("replied to message",
+		"to_message_id", target.ID,
+		"channel", target.ChannelID,
+		"kind", "file",
+		"file", filepath.Base(filePath),
+		"content_len", len(content),
+	)
+	return sent, nil
 }
 
 // toLabels converts inference OrderedLabels to the responses.Label type.

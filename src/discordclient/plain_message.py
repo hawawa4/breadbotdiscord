@@ -22,7 +22,7 @@ class FreeMessageHandler:
         """
         label = label.replace("_", " ")
         if confidence < 0.3:
-            return f"{label}, need help"
+            return f"{label}, but I wouldn't trust it,"
         elif confidence < 0.4:
             return f"not sure about {label}"
         elif confidence < 0.5:

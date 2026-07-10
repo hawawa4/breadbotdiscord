@@ -12,23 +12,23 @@ func mapConfidenceToSentiment(confidence float64, label string) string {
 	label = strings.ReplaceAll(label, "_", " ")
 	switch {
 	case confidence < 0.3:
-		return fmt.Sprintf("%s, need help", label)
+		return fmt.Sprintf("seems %s, but I wouldn't trust it,", label)
 	case confidence < 0.4:
-		return fmt.Sprintf("not sure about %s", label)
+		return fmt.Sprintf("not sure about %s,", label)
 	case confidence < 0.5:
-		return fmt.Sprintf("%s is unlikely", label)
+		return fmt.Sprintf("%s is unlikely,", label)
 	case confidence < 0.6:
-		return fmt.Sprintf("slightly possible %s", label)
+		return fmt.Sprintf("slightly possibley%s,", label)
 	case confidence < 0.7:
-		return fmt.Sprintf("moderately likely %s", label)
+		return fmt.Sprintf("moderately likely %s,", label)
 	case confidence < 0.8:
-		return fmt.Sprintf("probably %s", label)
+		return fmt.Sprintf("probably %s,", label)
 	case confidence < 0.9:
-		return fmt.Sprintf("fairly confident in %s", label)
+		return fmt.Sprintf("fairly confident in %s,", label)
 	case confidence < 1.0:
-		return fmt.Sprintf("pretty sure it's %s", label)
+		return fmt.Sprintf("pretty sure it's %s,", label)
 	default:
-		return fmt.Sprintf("Confirmed that it's %s", label)
+		return fmt.Sprintf("Confirmed that it's %s,", label)
 	}
 }
 

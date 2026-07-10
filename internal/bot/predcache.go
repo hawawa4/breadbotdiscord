@@ -11,7 +11,7 @@ import (
 // always returns every label, so on an "are you sure" retry we can re-render
 // from this cache (relaxing the confidence gate) instead of calling inference
 // again. Older entries are evicted LRU-style once the buffer is full.
-const predCacheSize = 32
+const predCacheSize = 8
 
 // cachedPrediction is a full inference result plus the annotated image path we
 // already wrote for it, keyed by the original message id.

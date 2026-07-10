@@ -18,7 +18,7 @@ func mapConfidenceToSentiment(confidence float64, label string) string {
 	case confidence < 0.5:
 		return fmt.Sprintf("%s is unlikely,", label)
 	case confidence < 0.6:
-		return fmt.Sprintf("slightly possibley%s,", label)
+		return fmt.Sprintf("slightly possible %s,", label)
 	case confidence < 0.7:
 		return fmt.Sprintf("moderately likely %s,", label)
 	case confidence < 0.8:

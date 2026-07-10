@@ -17,7 +17,9 @@ This is the Go port of the original Python (discord.py) bot; behavior is preserv
   sure" / "no way" and it re-runs detection at a lower confidence, attributing the
   result to the original post.
 - **Commands**
+  - `$help` — list the available commands.
   - `$hello` — sanity check.
+  - `$breadstats` — server best & worst leaderboards (defaults to top 3).
   - `$breadstats --self` — your best & worst roundness.
   - `$breadstats --top [n]` — server best & worst leaderboards (n clamped to 10).
   - `$breadstats --history` — a PNG chart of your last 50 roundness scores.

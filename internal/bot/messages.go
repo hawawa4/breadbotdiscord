@@ -67,11 +67,11 @@ func (b *Bot) parseCommand(content string) (name string, args []string, ok bool)
 	return name, fields[1:], true
 }
 
-// isRegisteredCommand lists the commands the bot responds to ($hello,
+// isRegisteredCommand lists the commands the bot responds to ($help, $hello,
 // $breadstats). Kept in sync with dispatchCommand.
 func isRegisteredCommand(name string) bool {
 	switch name {
-	case "hello", "breadstats":
+	case "help", "hello", "breadstats":
 		return true
 	default:
 		return false

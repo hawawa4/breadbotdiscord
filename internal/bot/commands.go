@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
 
@@ -18,6 +19,8 @@ import (
 // without the prefix; args are the space-split arguments after it.
 func (b *Bot) dispatchCommand(s *discordgo.Session, m *discordgo.MessageCreate, name string, args []string) {
 	switch name {
+	case "help":
+		b.cmdHelp(s, m, args)
 	case "hello":
 		b.cmdHello(s, m, args)
 	case "breadstats":
@@ -27,17 +30,31 @@ func (b *Bot) dispatchCommand(s *discordgo.Session, m *discordgo.MessageCreate, 
 	}
 }
 
+// cmdHelp lists the available commands. Replaces discord.py's auto-generated
+// $help, which the Go port does not have.
+func (b *Bot) cmdHelp(s *discordgo.Session, m *discordgo.MessageCreate, _ []string) {
+	b.reply(s, m, strings.Join([]string{
+		"**BreadBot commands**",
+		"`$help` — show this message.",
+		"`$hello` — sanity check.",
+		"`$breadstats` — server best & worst leaderboards (defaults to top 3).",
+		"`$breadstats --top [n]` — leaderboards of size n (max 10).",
+		"`$breadstats --self` — your best & worst roundness.",
+		"`$breadstats --history` — a chart of your last 50 roundness scores.",
+	}, "\n"))
+}
+
 // cmdHello replies "Hello!". Mirrors the Python hello command.
 func (b *Bot) cmdHello(s *discordgo.Session, m *discordgo.MessageCreate, _ []string) {
 	b.reply(s, m, "Hello!")
 }
 
-// cmdBreadstats routes the $breadstats subcommands. Mirrors breadstats:
-// no arg -> error; --history / --self have dedicated handlers; --top and
-// anything else fall to the server leaderboard.
+// cmdBreadstats routes the $breadstats subcommands. --history / --self have
+// dedicated handlers; --top, no args, and anything else fall to the server
+// leaderboard (which defaults to top 3 when no valid n is given).
 func (b *Bot) cmdBreadstats(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
 	if len(args) < 1 {
-		b.reply(s, m, "Not enough arguments")
+		b.breadstatsTop(s, m, args)
 		return
 	}
 	switch args[0] {
@@ -126,11 +143,15 @@ func (b *Bot) formatLeaderboard(header string, rows []db.Message) string {
 // parseTopLimit determines the leaderboard size and any joke suffix from the
 // $breadstats args, applying the fixed parsing rules:
 //   - the n token is the argument after "--top", or the first arg otherwise;
-//   - a valid n > 10 clamps to 10 with the "asking too much" suffix;
-//   - a missing/invalid n defaults to 3 with the "shame on you" suffix.
+//   - no n at all (bare $breadstats or --top alone) defaults to 3, no suffix;
+//   - a present-but-invalid n defaults to 3 with the "shame on you" suffix;
+//   - a valid n > 10 clamps to 10 with the "asking too much" suffix.
 func parseTopLimit(args []string) (limit int, suffix string) {
-	token := topLimitToken(args)
-	n, err := strconv.Atoi(strings.TrimSpace(token))
+	token := strings.TrimSpace(topLimitToken(args))
+	if token == "" {
+		return 3, ""
+	}
+	n, err := strconv.Atoi(token)
 	if err != nil {
 		return 3, " (You didn't enter a valid number. Shame on you)"
 	}
@@ -180,12 +201,33 @@ func (b *Bot) breadstatsHistory(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 }
 
+// discordMaxMessageLen is Discord's hard limit on message content length; the
+// API rejects longer bodies with a 400 (BASE_TYPE_MAX_LENGTH).
+const discordMaxMessageLen = 2000
+
 // reply sends content as a reply to the triggering message, matching the
-// Python `reference=ctx.message` behavior.
+// Python `reference=ctx.message` behavior. Content is truncated to Discord's
+// 2000-character limit so a long leaderboard never trips a 400.
 func (b *Bot) reply(s *discordgo.Session, m *discordgo.MessageCreate, content string) {
+	content = truncateForDiscord(content)
 	if _, err := s.ChannelMessageSendReply(m.ChannelID, content, m.Reference()); err != nil {
 		slog.Error("send reply", "channel", m.ChannelID, "err", err)
 	}
+}
+
+// truncateForDiscord clamps s to Discord's message length limit, cutting on a
+// rune boundary and appending an ellipsis so nothing silently disappears.
+func truncateForDiscord(s string) string {
+	if len(s) <= discordMaxMessageLen {
+		return s
+	}
+	const ellipsis = "\n…"
+	limit := discordMaxMessageLen - len(ellipsis)
+	// Back up to a rune boundary so we never split a multi-byte character.
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit] + ellipsis
 }
 
 // sendFile attaches a file as a reply to the target message.

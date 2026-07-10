@@ -108,9 +108,12 @@ func (b *Bot) handleBreadCandidate(s *discordgo.Session, m *discordgo.MessageCre
 }
 
 // handleAreYouSure resolves the original bread message (reply → bot reply →
-// original), then re-runs inference on THIS message's attachments at the
-// override confidence, persisting against the original message id. Ports the
-// areyousure branch of predict().
+// original) and re-renders its verdict at the relaxed override confidence so
+// every label is mentioned. It first tries the in-memory prediction cache
+// (populated by the normal path): on a hit it reuses the cached full response
+// AND annotated image — no second inference call. On a miss (e.g. after a
+// restart or eviction) it falls back to a fresh inference run on the original
+// post's attachments. Ports the areyousure branch of predict().
 func (b *Bot) handleAreYouSure(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Timeline: user's bread post -> bot reply -> user reply to bot reply.
 	// The bot reply (m.ReferencedMessage) itself references the original post.
@@ -125,8 +128,43 @@ func (b *Bot) handleAreYouSure(s *discordgo.Session, m *discordgo.MessageCreate)
 		slog.Error("are-you-sure: resolve original message", "err", err)
 		return
 	}
+	// A message fetched via REST (ChannelMessage) has an empty GuildID, unlike
+	// one delivered over the gateway. Backfill it from the reference, then from
+	// the triggering message (both are gateway objects and share the guild), so
+	// persistence doesn't try to parse an empty id.
+	if original.GuildID == "" {
+		original.GuildID = ref.GuildID
+	}
+	if original.GuildID == "" {
+		original.GuildID = m.GuildID
+	}
+	ogID := mustParseID(original.ID)
 
-	files, err := b.saveAttachments(m.Attachments)
+	// Cache hit: re-render from the stored full response at the relaxed gate,
+	// reusing the annotated image we already produced. No inference call.
+	if cached, ok := b.predCache.get(ogID); ok {
+		slog.Info("are-you-sure: cache hit; re-rendering at relaxed confidence",
+			"original_message_id", original.ID, "override_confidence", b.cfg.OverrideDetectionConfidence)
+		outFile, comment := renderBreadMessage(cached.outFile, cached.inFile, cached.pred, b.cfg.OverrideDetectionConfidence)
+		if err := b.deliverBreadMessage(s, original, outFile, comment, cached.pred); err != nil {
+			slog.Error("are-you-sure: deliver from cache", "message_id", original.ID, "err", err)
+		}
+		return
+	}
+
+	// Cache miss: fall back to a fresh inference run. The "are you sure" reply
+	// is usually just text, so use the ORIGINAL post's attachments.
+	attachments := original.Attachments
+	if len(attachments) == 0 {
+		slog.Warn("are-you-sure: cache miss and original has no attachments; nothing to re-run", "message_id", m.ID)
+		return
+	}
+	slog.Info("are-you-sure: cache miss; re-running inference at relaxed confidence",
+		"original_message_id", original.ID,
+		"override_confidence", b.cfg.OverrideDetectionConfidence,
+		"attachments", len(attachments),
+	)
+	files, err := b.saveAttachments(attachments)
 	if err != nil {
 		slog.Error("save attachments", "message_id", m.ID, "err", err)
 		return
@@ -138,9 +176,9 @@ func (b *Bot) handleAreYouSure(s *discordgo.Session, m *discordgo.MessageCreate)
 	}
 }
 
-// sendBreadMessage runs the compute tree for one file, sends the reply (image +
-// comment) to the target message's channel, and persists the results against
-// the target message id. Ports _send_bread_message.
+// sendBreadMessage runs inference for one file, caches the full response,
+// renders + sends the reply, and persists the results against the target
+// message id. Ports _send_bread_message.
 func (b *Bot) sendBreadMessage(s *discordgo.Session, target *discordgo.Message, inputFile string, minConfidence float64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
@@ -148,17 +186,38 @@ func (b *Bot) sendBreadMessage(s *discordgo.Session, target *discordgo.Message, 
 	// Typing indicator during inference (mirrors the `async with typing()`).
 	_ = s.ChannelTyping(target.ChannelID)
 
-	outFile, comment, pred, err := b.computeBreadMessage(ctx, inputFile, minConfidence)
+	// Always ask the service for everything (threshold 0); we filter here.
+	pred, err := b.inference.PredictFile(ctx, inputFile, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("inference: %w", err)
 	}
 
+	// Save the annotated image once (if any) so the cache can reuse it.
+	outFile := inputFile
+	if pred.Image != nil {
+		outPath := filepath.Join(b.cfg.DownloadsPath, "predictions", filepath.Base(inputFile))
+		if err := pred.SaveImage(outPath); err != nil {
+			return fmt.Errorf("save annotated image: %w", err)
+		}
+		outFile = outPath
+	}
+
+	ogID := mustParseID(target.ID)
+	b.predCache.put(ogID, cachedPrediction{pred: pred, outFile: outFile, inFile: inputFile})
+
+	renderedFile, comment := renderBreadMessage(outFile, inputFile, pred, minConfidence)
+	return b.deliverBreadMessage(s, target, renderedFile, comment, pred)
+}
+
+// deliverBreadMessage sends the reply and persists the inference results against
+// the target message id. Shared by the fresh path and the cache-rerender path.
+func (b *Bot) deliverBreadMessage(s *discordgo.Session, target *discordgo.Message, outFile, comment string, pred *inference.PredictResponse) error {
 	sent, err := b.sendFileReply(s, target, outFile, comment)
 	if err != nil {
 		return fmt.Errorf("send file reply: %w", err)
 	}
 
-	// Persist inference results (roundness may be nil → stored as-is).
+	// Persist inference results (roundness may be nil → stored as 0).
 	var roundness float64
 	if pred.Roundness != nil {
 		roundness = *pred.Roundness
@@ -180,36 +239,34 @@ func (b *Bot) sendBreadMessage(s *discordgo.Session, target *discordgo.Message, 
 	return nil
 }
 
-// computeBreadMessage calls inference and applies the response decision tree,
-// returning the file to attach, the comment, and the raw prediction. Ports
-// compute_bread_message_for_file.
+// renderBreadMessage applies the response decision tree to an ALREADY-OBTAINED
+// prediction, returning the file to attach and the comment. Ports the
+// non-inference half of compute_bread_message_for_file.
 //
-// Note: the "is it bread" gate compares against the configured
-// BreadDetectionConfidence (0.5), NOT minConfidence — minConfidence only gates
-// which per-label sentiments are appended. This matches the Python exactly.
-func (b *Bot) computeBreadMessage(ctx context.Context, inputFile string, minConfidence float64) (outFile, comment string, pred *inference.PredictResponse, err error) {
-	pred, err = b.inference.PredictFile(ctx, inputFile)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("inference: %w", err)
-	}
-
+// annotatedFile is the saved annotated image (when pred.Image != nil) and
+// inputFile is the plain source image; renderBreadMessage picks between them.
+//
+// minConfidence is the relaxable threshold: it gates BOTH the "is it bread"
+// decision and which per-label sentiments are appended. On the normal path it
+// is BreadDetectionConfidence (0.5); on an "are you sure" retry it is the lower
+// OverrideDetectionConfidence, so a marginal bread the user is sure about
+// actually passes the gate and gets the full treatment (the Python version
+// only relaxed the label sentiments, not the gate, so the retry did nothing —
+// this fixes that).
+func renderBreadMessage(annotatedFile, inputFile string, pred *inference.PredictResponse, minConfidence float64) (outFile, comment string) {
 	breadConf, hasBread := pred.Labels["bread"]
 	if !hasBread {
-		return inputFile, "This isn't bread at all!", pred, nil
+		return inputFile, "This isn't bread at all!"
 	}
-	if breadConf <= b.cfg.BreadDetectionConfidence {
-		return inputFile, "This is only very mildly bread. Metaphysical bread even.", pred, nil
+	if breadConf <= minConfidence {
+		return inputFile, "This is only very mildly bread. Metaphysical bread even."
 	}
 
 	labelsComment := messageContentFromLabels(toLabels(pred.OrderedLabels()), minConfidence)
 	if pred.Image != nil {
-		outPath := filepath.Join(b.cfg.DownloadsPath, "predictions", filepath.Base(inputFile))
-		if err := pred.SaveImage(outPath); err != nil {
-			return "", "", nil, fmt.Errorf("save annotated image: %w", err)
-		}
-		return outPath, labelsComment + messageFromRoundness(pred.Roundness), pred, nil
+		return annotatedFile, labelsComment + messageFromRoundness(pred.Roundness)
 	}
-	return inputFile, labelsComment + ". I couldn't find the shape dough. (Get it? Though - dough ehehehehe)", pred, nil
+	return inputFile, labelsComment + ". I couldn't find the shape dough. (Get it? Though - dough ehehehehe)"
 }
 
 // saveAttachments downloads each attachment to the downloads dir and returns

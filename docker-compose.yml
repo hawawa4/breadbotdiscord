@@ -34,4 +34,7 @@ services:
     image: taruelec/breadvision:latest
     env_file:
       - .env
+    ports:
+      # Read-only stats API + /healthz.
+      - "8000:8000"
     restart: unless-stopped

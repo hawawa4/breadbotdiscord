@@ -159,17 +159,24 @@ func (r *PredictResponse) OrderedLabels() []OrderedLabel {
 	return out
 }
 
-// predictRequest is the POST body: {"image": "<base64>"}.
+// predictRequest is the POST body. Image is the base64-encoded bytes. Threshold
+// is an OPTIONAL minimum confidence the service may use to widen/narrow what it
+// returns; it is omitted when zero. The current breadvision service ignores it
+// (it always returns every label and we filter client-side), but sending it is
+// harmless and lets us relax the service-side filter if it ever gains support.
 type predictRequest struct {
-	Image string `json:"image"`
+	Image     string  `json:"image"`
+	Threshold float64 `json:"threshold,omitempty"`
 }
 
 // Predict sends the raw image bytes (base64-encoded) to the microservice and
 // returns its prediction. A non-200 response is an error, matching the Python
-// PredictionError behavior.
-func (c *Client) Predict(ctx context.Context, imageBytes []byte) (*PredictResponse, error) {
+// PredictionError behavior. threshold is passed through as an optional request
+// hint (see predictRequest); pass 0 to omit it.
+func (c *Client) Predict(ctx context.Context, imageBytes []byte, threshold float64) (*PredictResponse, error) {
 	body, err := json.Marshal(predictRequest{
-		Image: base64.StdEncoding.EncodeToString(imageBytes),
+		Image:     base64.StdEncoding.EncodeToString(imageBytes),
+		Threshold: threshold,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("inference: marshal request: %w", err)
@@ -199,13 +206,14 @@ func (c *Client) Predict(ctx context.Context, imageBytes []byte) (*PredictRespon
 }
 
 // PredictFile reads an image from path, sends it to the microservice, and
-// returns the prediction. Convenience wrapper over Predict.
-func (c *Client) PredictFile(ctx context.Context, path string) (*PredictResponse, error) {
+// returns the prediction. Convenience wrapper over Predict. threshold is passed
+// through (0 to omit).
+func (c *Client) PredictFile(ctx context.Context, path string, threshold float64) (*PredictResponse, error) {
 	imageBytes, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("inference: read image %q: %w", path, err)
 	}
-	return c.Predict(ctx, imageBytes)
+	return c.Predict(ctx, imageBytes, threshold)
 }
 
 // SaveImage base64-decodes the annotated image and writes it to outPath,

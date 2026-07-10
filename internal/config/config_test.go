@@ -58,8 +58,8 @@ func TestLoadDefaults(t *testing.T) {
 	if c.BreadDetectionConfidence != 0.5 {
 		t.Errorf("BreadDetectionConfidence = %v, want 0.5", c.BreadDetectionConfidence)
 	}
-	if c.OverrideDetectionConfidence != 0.1 {
-		t.Errorf("OverrideDetectionConfidence = %v, want 0.1", c.OverrideDetectionConfidence)
+	if c.OverrideDetectionConfidence != 0.05 {
+		t.Errorf("OverrideDetectionConfidence = %v, want 0.05", c.OverrideDetectionConfidence)
 	}
 	if c.DBDataPath != "dbdata/messages.db" {
 		t.Errorf("DBDataPath = %q, want dbdata/messages.db", c.DBDataPath)

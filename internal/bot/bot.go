@@ -26,6 +26,11 @@ type Bot struct {
 	inference *inference.Client
 	session   *discordgo.Session
 
+	// predCache holds recent full predictions keyed by original message id, so
+	// an "are you sure" retry can re-render from memory instead of re-running
+	// inference (see predcache.go).
+	predCache *predCache
+
 	// selfID is the bot's own user id, set on ready; used to ignore its own
 	// messages and to detect replies to the bot.
 	selfID string
@@ -46,6 +51,7 @@ func New(cfg *config.Config, database *db.DB, inf *inference.Client) (*Bot, erro
 		db:        database,
 		inference: inf,
 		session:   session,
+		predCache: newPredCache(predCacheSize),
 	}
 
 	session.AddHandler(b.onReady)

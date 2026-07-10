@@ -44,7 +44,7 @@ func TestPredictSuccess(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	res, err := c.Predict(context.Background(), raw)
+	res, err := c.Predict(context.Background(), raw, 0)
 	if err != nil {
 		t.Fatalf("Predict: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPredictNon200(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	if _, err := c.Predict(context.Background(), []byte("x")); err == nil {
+	if _, err := c.Predict(context.Background(), []byte("x"), 0); err == nil {
 		t.Error("expected error on non-200 response")
 	}
 }
@@ -89,7 +89,7 @@ func TestPredictNullFields(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	res, err := c.Predict(context.Background(), []byte("x"))
+	res, err := c.Predict(context.Background(), []byte("x"), 0)
 	if err != nil {
 		t.Fatalf("Predict: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestPredictPreservesLabelOrder(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	res, err := c.Predict(context.Background(), []byte("x"))
+	res, err := c.Predict(context.Background(), []byte("x"), 0)
 	if err != nil {
 		t.Fatalf("Predict: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestPredictNullLabelsNoOrder(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL)
-	res, err := c.Predict(context.Background(), []byte("x"))
+	res, err := c.Predict(context.Background(), []byte("x"), 0)
 	if err != nil {
 		t.Fatalf("Predict: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestPredictFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := NewClient(srv.URL)
-	if _, err := c.PredictFile(context.Background(), p); err != nil {
+	if _, err := c.PredictFile(context.Background(), p, 0); err != nil {
 		t.Fatalf("PredictFile: %v", err)
 	}
 }

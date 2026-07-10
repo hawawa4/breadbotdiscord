@@ -10,12 +10,22 @@ This is the Go port of the original Python (discord.py) bot; behavior is preserv
 ## How it works
 
 - **Bread detection** — in configured channels, a post with an attachment from a
-  user with an allowed role is sent to the inference microservice. The bot replies
-  with a verdict (and an annotated image + roundness, when available) and records
-  the result.
+  user with an allowed role is sent to the inference microservice. The service
+  returns every label with its confidence; the bot filters against
+  `BREAD_DETECTION_CONFIDENCE`, replies with a verdict (and an annotated image +
+  roundness, when available), records the result, and caches the full response
+  in memory (see below).
 - **"Are you sure?" retry** — reply to one of the bot's messages with "are you
-  sure" / "no way" and it re-runs detection at a lower confidence, attributing the
-  result to the original post.
+  sure" / "no way" and it re-renders the verdict at the lower
+  `OVERRIDE_DETECTION_CONFIDENCE`, so borderline breads pass and every label is
+  mentioned. The result is attributed to the original post.
+- **Prediction cache** — the inference service does its best single-pass
+  detection and returns everything, so re-running it yields the same result.
+  The bot therefore keeps the last 32 full predictions in an in-memory LRU keyed
+  by the original message. An "are you sure" retry re-renders straight from this
+  cache (reusing the already-annotated image, no second inference call). On a
+  cache miss — e.g. after a restart or once 32 newer posts have evicted it — it
+  falls back to a fresh inference run at the relaxed confidence.
 - **Commands**
   - `$help` — list the available commands.
   - `$hello` — sanity check.
@@ -35,8 +45,8 @@ is required; everything else has a default.
 | `DISCORD_TOKEN` | — | **required** |
 | `DISCORD_BREAD_CHANNELS` | `[]` | channel ids, `[1,2,3]` format |
 | `DISCORD_BREAD_ROLE` | `[]` | role ids, `[1,2,3]` format |
-| `BREAD_DETECTION_CONFIDENCE` | `0.5` | "bread" label threshold |
-| `OVERRIDE_DETECTION_CONFIDENCE` | `0.1` | threshold on "are you sure" retry |
+| `BREAD_DETECTION_CONFIDENCE` | `0.5` | min "bread" confidence to count as bread (and gate label mentions) |
+| `OVERRIDE_DETECTION_CONFIDENCE` | `0.05` | relaxed threshold used on an "are you sure" retry |
 | `DB_DATA_PATH` | `dbdata/messages.db` | SQLite file (reused from the Python bot) |
 | `DOWNLOADS_PATH` | `downloads/` | attachments, plots, annotated images |
 | `INFERENCE_SERVICE_URL` | `http://localhost:8000` | microservice base URL |

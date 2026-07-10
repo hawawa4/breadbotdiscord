@@ -42,7 +42,7 @@ func Load() (*Config, error) {
 	c := &Config{
 		Debug:                       envBool("DEBUG", false),
 		BreadDetectionConfidence:    envFloat("BREAD_DETECTION_CONFIDENCE", 0.5),
-		OverrideDetectionConfidence: envFloat("OVERRIDE_DETECTION_CONFIDENCE", 0.1),
+		OverrideDetectionConfidence: envFloat("OVERRIDE_DETECTION_CONFIDENCE", 0.05),
 		DiscordToken:                os.Getenv("DISCORD_TOKEN"),
 		DBDataPath:                  envStr("DB_DATA_PATH", "dbdata/messages.db"),
 		DownloadsPath:               envStr("DOWNLOADS_PATH", "downloads/"),

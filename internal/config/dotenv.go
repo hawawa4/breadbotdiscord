@@ -2,18 +2,25 @@ package config
 
 import (
 	"bufio"
+	"log/slog"
 	"os"
 	"strings"
 )
 
 // LoadDotEnv reads a .env file (KEY=value lines) and sets any variables not
-// already present in the environment. Missing file is not an error. This mirrors
-// pydantic-settings' env_file support for local development; real environments
-// set vars directly and take precedence.
+// already present in the environment. This mirrors pydantic-settings' env_file
+// support for local development; real environments (e.g. docker-compose's
+// env_file) set vars directly and take precedence.
+//
+// The .env file is purely a convenience: if it is missing OR unreadable (e.g. a
+// permission mismatch when running in a container as a non-root user), it is
+// skipped without error — configuration then comes entirely from the process
+// environment.
 func LoadDotEnv(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || os.IsPermission(err) {
+			slog.Debug("skipping .env", "path", path, "reason", err)
 			return nil
 		}
 		return err

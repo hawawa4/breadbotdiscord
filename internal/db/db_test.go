@@ -159,6 +159,74 @@ func TestGetMessageLabels(t *testing.T) {
 	}
 }
 
+// TestZeroRoundnessExcluded verifies that a roundness of 0 (shape couldn't be
+// computed — effectively null) is excluded from the leaderboards, per-user
+// min/max, and history plot, rather than showing up as a real "worst" score.
+func TestZeroRoundnessExcluded(t *testing.T) {
+	d := openTestDB(t)
+
+	// Baselines before inserting the zero row.
+	worstBefore, err := d.GetMinRoundnessLeaderboard(1000)
+	if err != nil {
+		t.Fatalf("min leaderboard baseline: %v", err)
+	}
+	histBefore, err := d.GetRoundnessHistory(userWithHistory)
+	if err != nil {
+		t.Fatalf("history baseline: %v", err)
+	}
+
+	// Insert a 0-roundness row for the user. A huge ogmessage_id means it would
+	// sort first in history (newest) and its 0 would sort as the very "worst"
+	// if the != 0 filter were missing.
+	const zeroOgID = int64(9999999999999999)
+	if err := d.UpsertMessageStats(zeroOgID, 0, map[string]float64{"bread": 0.9}); err != nil {
+		t.Fatalf("UpsertMessageStats(0): %v", err)
+	}
+	if err := d.UpsertMessageDiscordInfo(zeroOgID, "url", 1, userWithHistory, 1, 1); err != nil {
+		t.Fatalf("UpsertMessageDiscordInfo: %v", err)
+	}
+
+	// Worst leaderboard must be unchanged (the 0 row is excluded).
+	worstAfter, err := d.GetMinRoundnessLeaderboard(1000)
+	if err != nil {
+		t.Fatalf("min leaderboard after: %v", err)
+	}
+	if len(worstAfter) != len(worstBefore) {
+		t.Errorf("worst leaderboard len = %d, want %d (0-roundness must be excluded)", len(worstAfter), len(worstBefore))
+	}
+	for _, m := range worstAfter {
+		if m.OgMessageID == zeroOgID {
+			t.Errorf("0-roundness row %d leaked into worst leaderboard", zeroOgID)
+		}
+		if m.Roundness.Float64 == 0 {
+			t.Errorf("0-roundness value present in worst leaderboard")
+		}
+	}
+
+	// Per-user min must not be the 0 row.
+	minMsg, err := d.GetMinRoundnessForUser(userWithHistory)
+	if err != nil {
+		t.Fatalf("GetMinRoundnessForUser: %v", err)
+	}
+	if minMsg.OgMessageID == zeroOgID || minMsg.Roundness.Float64 == 0 {
+		t.Errorf("per-user min returned the 0-roundness row (%d, %v)", minMsg.OgMessageID, minMsg.Roundness.Float64)
+	}
+
+	// History must be unchanged in length (0 row excluded).
+	histAfter, err := d.GetRoundnessHistory(userWithHistory)
+	if err != nil {
+		t.Fatalf("history after: %v", err)
+	}
+	if len(histAfter) != len(histBefore) {
+		t.Errorf("history len = %d, want %d (0-roundness must be excluded)", len(histAfter), len(histBefore))
+	}
+	for _, p := range histAfter {
+		if p.Roundness == 0 {
+			t.Errorf("0-roundness value present in history plot data")
+		}
+	}
+}
+
 func TestUpsertMessageStatsRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	labels := map[string]float64{"bread": 0.9, "round": 0.5}

@@ -72,10 +72,13 @@ func (d *DB) GetMaxRoundnessForUser(userID int64) (Message, error) {
 // user. Mirrors _get_roundness_message_byuserid: ties broken by ogmessage_id
 // in the same direction as roundness. Returns ErrUserNotFound if none.
 func (d *DB) roundnessMessageByUser(userID int64, order OrderBy) (Message, error) {
+	// A roundness of 0 means the shape couldn't be computed (effectively null),
+	// so exclude it from min/max ranking just like a NULL.
 	q := fmt.Sprintf(`
 	%s
 	WHERE author_id = ?
 	AND roundness NOT NULL
+	AND roundness != 0
 	ORDER BY roundness %s, ogmessage_id %s
 	LIMIT 1`, selectMessages, order, order)
 	row := d.sql.QueryRow(q, userID)
@@ -102,9 +105,12 @@ func (d *DB) GetMinRoundnessLeaderboard(n int) ([]Message, error) {
 // roundnessLeaderboard returns up to n min/max roundness messages server-wide.
 // Mirrors _get_minmax_roundness_leaderboard.
 func (d *DB) roundnessLeaderboard(n int, order OrderBy) ([]Message, error) {
+	// Exclude roundness 0 (shape couldn't be computed) so it never shows up as
+	// a "worst" result — it is effectively a null, not a real low score.
 	q := fmt.Sprintf(`
 	%s
 	WHERE roundness not null
+	AND roundness != 0
 	ORDER BY roundness %s
 	LIMIT ?`, selectMessages, order)
 	rows, err := d.sql.Query(q, n)
@@ -134,10 +140,13 @@ type RoundnessPoint struct {
 // GetRoundnessHistory returns the last 50 roundness values for a user, ordered
 // by message id descending, indexed from 1. Mirrors get_roundness_history.
 func (d *DB) GetRoundnessHistory(userID int64) ([]RoundnessPoint, error) {
+	// Exclude roundness 0 (shape couldn't be computed) so the plot only shows
+	// real scores — a 0 is effectively a null.
 	q := fmt.Sprintf(`
 	%s
 	WHERE 1=1
 	AND roundness not null
+	AND roundness != 0
 	AND author_id = ?
 	ORDER BY ogmessage_id %s
 	LIMIT 50`, selectMessages, OrderDesc)

@@ -222,3 +222,11 @@ dbdata/
 
 # docker-compose DB bind mount
 .dbdatastuff/
+
+# Frontend (Svelte SPA)
+frontend/node_modules/
+# The compiled SPA is embedded into the Go binary via go:embed, so it MUST be
+# tracked despite the global dist/ ignore above. Force-include it (and its
+# committed placeholder index.html) back in.
+!internal/httpserver/frontend/dist/
+!internal/httpserver/frontend/dist/**

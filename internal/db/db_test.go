@@ -39,10 +39,10 @@ func openTestDB(t *testing.T) *DB {
 }
 
 const (
-	userWithHistory  = int64(95618667529637888)
-	roundestOgID     = int64(1419411009986367640)
-	leastRoundOgID   = int64(1266697604218224650)
-	totalRoundnessN  = 32
+	userWithHistory = int64(95618667529637888)
+	roundestOgID    = int64(1419411009986367640)
+	leastRoundOgID  = int64(1266697604218224650)
+	totalRoundnessN = 32
 )
 
 func TestOpenCreatesSchemaOnFreshDB(t *testing.T) {
@@ -147,9 +147,17 @@ func TestRoundnessHistory(t *testing.T) {
 
 func TestGetMessageLabels(t *testing.T) {
 	d := openTestDB(t)
-	m, err := d.GetMessage(roundestOgID)
+	msgs, err := d.GetMessage(roundestOgID)
 	if err != nil {
 		t.Fatalf("GetMessage: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 row for migrated fixture message, got %d", len(msgs))
+	}
+	m := msgs[0]
+	// A fixture row migrated from the single-key schema has attachment_id 0.
+	if m.AttachmentID != 0 {
+		t.Errorf("migrated fixture attachment_id = %d, want 0", m.AttachmentID)
 	}
 	if !m.Roundness.Valid {
 		t.Error("roundness should be valid")
@@ -179,10 +187,10 @@ func TestZeroRoundnessExcluded(t *testing.T) {
 	// sort first in history (newest) and its 0 would sort as the very "worst"
 	// if the != 0 filter were missing.
 	const zeroOgID = int64(9999999999999999)
-	if err := d.UpsertMessageStats(zeroOgID, 0, map[string]float64{"bread": 0.9}, ""); err != nil {
+	if err := d.UpsertMessageStats(zeroOgID, 0, 0, map[string]float64{"bread": 0.9}, ""); err != nil {
 		t.Fatalf("UpsertMessageStats(0): %v", err)
 	}
-	if err := d.UpsertMessageDiscordInfo(zeroOgID, "url", 1, userWithHistory, 1, 1); err != nil {
+	if err := d.UpsertMessageDiscordInfo(zeroOgID, 0, "url", 1, userWithHistory, 1, 1); err != nil {
 		t.Fatalf("UpsertMessageDiscordInfo: %v", err)
 	}
 
@@ -230,13 +238,18 @@ func TestZeroRoundnessExcluded(t *testing.T) {
 func TestUpsertMessageStatsRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	labels := map[string]float64{"bread": 0.9, "round": 0.5}
-	if err := d.UpsertMessageStats(roundestOgID, 0.77, labels, "loaf.png"); err != nil {
+	// attachment_id 0 updates the migrated fixture row for this message.
+	if err := d.UpsertMessageStats(roundestOgID, 0, 0.77, labels, "loaf.png"); err != nil {
 		t.Fatalf("UpsertMessageStats: %v", err)
 	}
-	m, err := d.GetMessage(roundestOgID)
+	msgs, err := d.GetMessage(roundestOgID)
 	if err != nil {
 		t.Fatalf("GetMessage: %v", err)
 	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(msgs))
+	}
+	m := msgs[0]
 	if m.Roundness.Float64 != 0.77 {
 		t.Errorf("roundness = %v, want 0.77", m.Roundness.Float64)
 	}
@@ -248,15 +261,75 @@ func TestUpsertMessageStatsRoundTrip(t *testing.T) {
 	}
 
 	// An empty filename must round-trip as NULL, not an empty string.
-	if err := d.UpsertMessageStats(roundestOgID, 0.77, labels, ""); err != nil {
+	if err := d.UpsertMessageStats(roundestOgID, 0, 0.77, labels, ""); err != nil {
 		t.Fatalf("UpsertMessageStats(empty img): %v", err)
 	}
-	m, err = d.GetMessage(roundestOgID)
+	msgs, err = d.GetMessage(roundestOgID)
 	if err != nil {
 		t.Fatalf("GetMessage: %v", err)
 	}
-	if m.ImageFilename.Valid {
-		t.Errorf("image_filename should be NULL for empty input, got %q", m.ImageFilename.String)
+	if msgs[0].ImageFilename.Valid {
+		t.Errorf("image_filename should be NULL for empty input, got %q", msgs[0].ImageFilename.String)
+	}
+}
+
+// TestMultiImageMessage verifies that several image attachments of the SAME
+// message are stored as distinct rows (composite PK), each with its own
+// roundness/labels/image, rather than clobbering each other.
+func TestMultiImageMessage(t *testing.T) {
+	d := openTestDB(t)
+	const msgID = int64(5555555555555555)
+
+	// Three attachments on one message, distinct attachment ids.
+	specs := []struct {
+		attID     int64
+		roundness float64
+		image     string
+	}{
+		{attID: 111, roundness: 0.10, image: "111_a.png"},
+		{attID: 222, roundness: 0.90, image: "222_b.png"},
+		{attID: 333, roundness: 0.50, image: "333_c.png"},
+	}
+	for _, sp := range specs {
+		if err := d.UpsertMessageStats(msgID, sp.attID, sp.roundness, map[string]float64{"bread": 0.8}, sp.image); err != nil {
+			t.Fatalf("UpsertMessageStats(att %d): %v", sp.attID, err)
+		}
+		if err := d.UpsertMessageDiscordInfo(msgID, sp.attID, "url", 1, 42, 1, 1); err != nil {
+			t.Fatalf("UpsertMessageDiscordInfo(att %d): %v", sp.attID, err)
+		}
+	}
+
+	msgs, err := d.GetMessage(msgID)
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 rows for a 3-image message, got %d", len(msgs))
+	}
+	// Ordered by attachment_id ascending.
+	wantIDs := []int64{111, 222, 333}
+	for i, m := range msgs {
+		if m.AttachmentID != wantIDs[i] {
+			t.Errorf("row %d attachment_id = %d, want %d", i, m.AttachmentID, wantIDs[i])
+		}
+		if m.OgMessageID != msgID {
+			t.Errorf("row %d ogmessage_id = %d, want %d", i, m.OgMessageID, msgID)
+		}
+	}
+
+	// Updating one attachment must not touch the others.
+	if err := d.UpsertMessageStats(msgID, 222, 0.99, map[string]float64{"bread": 0.8}, "222_b.png"); err != nil {
+		t.Fatalf("update att 222: %v", err)
+	}
+	msgs, _ = d.GetMessage(msgID)
+	if len(msgs) != 3 {
+		t.Fatalf("row count changed after update: %d", len(msgs))
+	}
+	if msgs[1].Roundness.Float64 != 0.99 {
+		t.Errorf("att 222 roundness = %v, want 0.99", msgs[1].Roundness.Float64)
+	}
+	if msgs[0].Roundness.Float64 != 0.10 || msgs[2].Roundness.Float64 != 0.50 {
+		t.Errorf("sibling attachments changed: %v, %v", msgs[0].Roundness.Float64, msgs[2].Roundness.Float64)
 	}
 }
 

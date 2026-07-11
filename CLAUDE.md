@@ -49,9 +49,15 @@ Package layout (`internal/`):
 - **`config/`** — env-var config (`.env` auto-loaded for local dev via `dotenv.go`). `DISCORD_TOKEN`
   required; all else defaults. Channel/role lists use the Python-style `[1,2,3]` string format
   (`parseIntList`). See the README config table for every variable.
-- **`db/`** — SQLite layer shared by both the bot and the HTTP server. Two tables (`messages`,
-  `discordusers`) created idempotently; schema is kept **identical to the Python version** so the
-  existing DB file is reused as-is. `ErrUserNotFound` mirrors the Python exception.
+- **`db/`** — SQLite layer shared by both the bot and the HTTP server. Tables (`messages`,
+  `discordusers`, plus `botstate` for catch-up) created idempotently. The schema started identical
+  to the Python version, but has since diverged additively via **backward-compatible migrations**
+  run on every `Open` (`migrateMessagesSchema`): the existing DB file is still reused in place.
+  `messages` is now keyed by the composite **`(ogmessage_id, attachment_id)`** — one row per image
+  attachment, since a message can carry several images each scored independently. A legacy
+  single-key DB is rebuilt in place with old rows getting `attachment_id 0`. An `image_filename`
+  column links a row to its annotated PNG under `downloads/predictions/` (for the frontend gallery).
+  `ErrUserNotFound` mirrors the Python exception.
 - **`inference/`** — HTTP client for the microservice. POSTs base64 image bytes to
   `{base}/predict/predict` (the doubled segment is intentional, matching the Python client).
 - **`bot/`** — the discordgo session, event routing, bread pipeline, and commands.
@@ -76,17 +82,27 @@ broad try/except).
 
 ### Two non-obvious behaviors — read before touching bread.go
 
+0. **Multi-image messages.** A message can carry several image attachments; each is downloaded,
+   inferred, and persisted **independently**. Filenames are namespaced `{attachmentID}_{name}`
+   (`attachmentFilename` in bread.go) because Discord filenames aren't unique — the old bare-name
+   scheme let attachments clobber each other on disk (only the last image survived) and predictions
+   collide across messages. The attachment id threads through the whole pipeline: it's half the DB
+   composite key, half the predCache key, and the `savedAttachment.id` returned by `saveAttachments`.
+
 1. **Prediction cache (`predcache.go`).** The service does a single-pass detection and returns *every*
    label, so re-running yields the same result. The bot keeps the last `predCacheSize` (currently 8)
-   full predictions in an in-memory LRU keyed by original message id, storing the already-annotated
-   image path. **Note the README still says "32" — the code is the source of truth (`predCacheSize`).**
+   full predictions in an in-memory LRU keyed by **`predKey{ogMessageID, attachmentID}`** (so a
+   multi-image message gets one entry per image, not one that clobbers the rest), storing the
+   already-annotated image path. **Note the README still says "32" — the code is the source of truth
+   (`predCacheSize`).**
 
 2. **"Are you sure?" retry.** A reply containing "are you sure"/"no way" to one of the bot's own
-   messages re-renders the verdict at the lower `OverrideDetectionConfidence`. On a cache hit it
-   re-renders straight from the cached response + image (no second inference call); on a miss (restart
-   or eviction) it re-downloads the *original* post's attachments and re-runs inference. `minConfidence`
-   in `renderBreadMessage` gates **both** the is-it-bread decision and the per-label sentiments — the
-   Python version only relaxed the sentiments (so the retry did nothing); the Go port fixes that.
+   messages re-renders the verdict at the lower `OverrideDetectionConfidence`. It iterates **every**
+   attachment of the original post: each cached image re-renders straight from the cached response +
+   image (no inference call), and only the ones that miss (restart or eviction) get re-downloaded and
+   re-inferred. `minConfidence` in `renderBreadMessage` gates **both** the is-it-bread decision and
+   the per-label sentiments — the Python version only relaxed the sentiments (so the retry did
+   nothing); the Go port fixes that.
 
 `commands.go` similarly documents fixed-from-Python bugs in `$breadstats --top` (correct `n` parsing,
 correct "Worst n" label). When editing these, preserve the fixes — don't regress to the Python behavior.

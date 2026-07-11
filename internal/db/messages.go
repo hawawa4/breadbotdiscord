@@ -8,57 +8,73 @@ import (
 )
 
 // UpsertMessageStats inserts or updates the inference results (roundness +
-// labels + annotated-image filename) for a message, keyed on ogmessage_id.
-// labels is serialized to a JSON string. imageFilename is the basename of the
-// annotated PNG under downloads/predictions/, or "" when none was produced (in
-// which case the column is left NULL). Mirrors upsert_message_stats.
-func (d *DB) UpsertMessageStats(ogMessageID int64, roundness float64, labels map[string]float64, imageFilename string) error {
+// labels + annotated-image filename) for a single image attachment of a
+// message, keyed on the composite (ogmessage_id, attachment_id). labels is
+// serialized to a JSON string. imageFilename is the basename of the annotated
+// PNG under downloads/predictions/, or "" when none was produced (in which case
+// the column is left NULL). Mirrors upsert_message_stats.
+func (d *DB) UpsertMessageStats(ogMessageID, attachmentID int64, roundness float64, labels map[string]float64, imageFilename string) error {
 	labelsJSON, err := json.Marshal(labels)
 	if err != nil {
 		return fmt.Errorf("db: marshal labels: %w", err)
 	}
 	const q = `
-	INSERT INTO messages (ogmessage_id, roundness, labels_json, image_filename)
-	VALUES (?, ?, ?, ?)
-	ON CONFLICT(ogmessage_id) DO UPDATE SET
+	INSERT INTO messages (ogmessage_id, attachment_id, roundness, labels_json, image_filename)
+	VALUES (?, ?, ?, ?, ?)
+	ON CONFLICT(ogmessage_id, attachment_id) DO UPDATE SET
 		roundness=excluded.roundness,
 		labels_json=excluded.labels_json,
 		image_filename=excluded.image_filename`
-	if _, err := d.sql.Exec(q, ogMessageID, roundness, string(labelsJSON), nullString(imageFilename)); err != nil {
+	if _, err := d.sql.Exec(q, ogMessageID, attachmentID, roundness, string(labelsJSON), nullString(imageFilename)); err != nil {
 		return fmt.Errorf("db: upsert message stats: %w", err)
 	}
 	return nil
 }
 
-// UpsertMessageDiscordInfo inserts or updates the discord metadata for a
-// message, keyed on ogmessage_id. Mirrors upsert_message_discordinfo.
-func (d *DB) UpsertMessageDiscordInfo(ogMessageID int64, replyJumpURL string, replyMessageID, authorID, channelID, guildID int64) error {
+// UpsertMessageDiscordInfo inserts or updates the discord metadata for a single
+// image attachment of a message, keyed on the composite (ogmessage_id,
+// attachment_id). Mirrors upsert_message_discordinfo.
+func (d *DB) UpsertMessageDiscordInfo(ogMessageID, attachmentID int64, replyJumpURL string, replyMessageID, authorID, channelID, guildID int64) error {
 	const q = `
-	INSERT INTO messages (ogmessage_id, replymessage_jump_url, replymessage_id, author_id, channel_id, guild_id)
-	VALUES (?, ?, ?, ?, ?, ?)
-	ON CONFLICT(ogmessage_id) DO UPDATE SET
+	INSERT INTO messages (ogmessage_id, attachment_id, replymessage_jump_url, replymessage_id, author_id, channel_id, guild_id)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(ogmessage_id, attachment_id) DO UPDATE SET
 		replymessage_jump_url=excluded.replymessage_jump_url,
 		replymessage_id=excluded.replymessage_id,
 		author_id=excluded.author_id,
 		channel_id=excluded.channel_id,
 		guild_id=excluded.guild_id`
-	if _, err := d.sql.Exec(q, ogMessageID, replyJumpURL, replyMessageID, authorID, channelID, guildID); err != nil {
+	if _, err := d.sql.Exec(q, ogMessageID, attachmentID, replyJumpURL, replyMessageID, authorID, channelID, guildID); err != nil {
 		return fmt.Errorf("db: upsert message discord info: %w", err)
 	}
 	return nil
 }
 
-// GetMessage returns a single message by ogmessage_id (for the HTTP server).
-func (d *DB) GetMessage(ogMessageID int64) (Message, error) {
-	row := d.sql.QueryRow(selectMessages+" WHERE ogmessage_id = ?", ogMessageID)
-	m, err := scanMessage(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Message{}, ErrUserNotFound
-	}
+// GetMessage returns the image attachments of a message (for the HTTP server),
+// ordered by attachment_id. A message with several images returns several rows;
+// ErrUserNotFound if the message id is unknown.
+func (d *DB) GetMessage(ogMessageID int64) ([]Message, error) {
+	rows, err := d.sql.Query(selectMessages+" WHERE ogmessage_id = ? ORDER BY attachment_id", ogMessageID)
 	if err != nil {
-		return Message{}, fmt.Errorf("db: get message: %w", err)
+		return nil, fmt.Errorf("db: get message: %w", err)
 	}
-	return m, nil
+	defer rows.Close()
+
+	var result []Message
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("db: scan message row: %w", err)
+		}
+		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(result) == 0 {
+		return nil, ErrUserNotFound
+	}
+	return result, nil
 }
 
 // GetMinRoundnessForUser returns the least-round message for a user.
@@ -82,8 +98,8 @@ func (d *DB) roundnessMessageByUser(userID int64, order OrderBy) (Message, error
 	WHERE author_id = ?
 	AND roundness NOT NULL
 	AND roundness != 0
-	ORDER BY roundness %s, ogmessage_id %s
-	LIMIT 1`, selectMessages, order, order)
+	ORDER BY roundness %s, ogmessage_id %s, attachment_id %s
+	LIMIT 1`, selectMessages, order, order, order)
 	row := d.sql.QueryRow(q, userID)
 	m, err := scanMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -136,10 +152,10 @@ func (d *DB) roundnessLeaderboard(n int, order OrderBy) ([]Message, error) {
 // StatsSummary holds server-wide aggregate stats for the dashboard header.
 // AvgRoundness/MaxRoundness are only meaningful when ScoredCount > 0.
 type StatsSummary struct {
-	ScoredCount  int     // messages with a real (non-null, non-zero) roundness
-	DistinctUsers int    // distinct authors among scored messages
-	AvgRoundness float64 // mean roundness over scored messages
-	MaxRoundness float64 // highest roundness over scored messages
+	ScoredCount   int     // messages with a real (non-null, non-zero) roundness
+	DistinctUsers int     // distinct authors among scored messages
+	AvgRoundness  float64 // mean roundness over scored messages
+	MaxRoundness  float64 // highest roundness over scored messages
 }
 
 // GetStatsSummary returns server-wide aggregates over messages that have a real
@@ -180,8 +196,8 @@ func (d *DB) GetRoundnessHistory(userID int64) ([]RoundnessPoint, error) {
 	AND roundness not null
 	AND roundness != 0
 	AND author_id = ?
-	ORDER BY ogmessage_id %s
-	LIMIT 50`, selectMessages, OrderDesc)
+	ORDER BY ogmessage_id %s, attachment_id %s
+	LIMIT 50`, selectMessages, OrderDesc, OrderDesc)
 	rows, err := d.sql.Query(q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("db: roundness history: %w", err)

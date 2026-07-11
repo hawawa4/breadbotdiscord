@@ -64,11 +64,19 @@ func (d *DB) Ping() error { return d.sql.Ping() }
 func (d *DB) Close() error { return d.sql.Close() }
 
 // createSchema creates the messages and discordusers tables if they don't
-// already exist. Identical to src/db/service.py create_db().
+// already exist, then applies backward-compatible migrations for DB files
+// created by earlier versions.
+//
+// The messages table is keyed by the composite (ogmessage_id, attachment_id):
+// a single Discord message can carry several image attachments, each of which
+// is inferred and scored independently, so one row per (message, attachment) is
+// required. Older DBs keyed by ogmessage_id alone are rebuilt in place with the
+// pre-existing rows assigned attachment_id 0 (see migrateMessagesSchema).
 func (d *DB) createSchema() error {
 	const createMessages = `
 	CREATE TABLE IF NOT EXISTS messages (
-		ogmessage_id INTEGER PRIMARY KEY,
+		ogmessage_id INTEGER NOT NULL,
+		attachment_id INTEGER NOT NULL DEFAULT 0,
 		replymessage_jump_url TEXT,
 		replymessage_id INTEGER,
 		author_id INTEGER,
@@ -76,7 +84,8 @@ func (d *DB) createSchema() error {
 		guild_id INTEGER,
 		roundness REAL,
 		labels_json TEXT,
-		image_filename TEXT
+		image_filename TEXT,
+		PRIMARY KEY (ogmessage_id, attachment_id)
 	)`
 	const createUsers = `
 	CREATE TABLE IF NOT EXISTS discordusers (
@@ -104,25 +113,97 @@ func (d *DB) createSchema() error {
 		return fmt.Errorf("db: create botstate table: %w", err)
 	}
 
-	// Backward-compatible migration: image_filename is in the CREATE above for
-	// fresh DBs, but an existing (pre-frontend) DB file won't have it. Add it
-	// idempotently. The column is nullable, so old rows simply have no linked
-	// gallery image. This keeps the "reuse the existing DB file as-is" contract.
-	if err := d.ensureColumn("messages", "image_filename", "TEXT"); err != nil {
+	if err := d.migrateMessagesSchema(); err != nil {
 		return err
 	}
 	return nil
 }
 
-// ensureColumn adds a column to a table if it is not already present. Used for
-// additive, backward-compatible migrations against a pre-existing DB file
-// (SQLite has no "ADD COLUMN IF NOT EXISTS", so we check PRAGMA table_info).
-func (d *DB) ensureColumn(table, column, decl string) error {
+// migrateMessagesSchema brings a pre-existing messages table up to the current
+// shape. It is idempotent (safe to run on every open) and handles two eras of
+// DB file:
+//
+//   - Pre-frontend: no image_filename column. Added idempotently (nullable, so
+//     old rows simply have no linked gallery image).
+//   - Pre-multi-image: keyed by ogmessage_id alone, no attachment_id. The table
+//     is rebuilt with the composite PK and existing rows get attachment_id 0.
+//
+// A freshly created table (from createSchema's CREATE) already has both, so
+// both checks no-op.
+func (d *DB) migrateMessagesSchema() error {
+	cols, err := d.tableColumns("messages")
+	if err != nil {
+		return err
+	}
+
+	if !cols["image_filename"] {
+		if err := d.ensureColumn("messages", "image_filename", "TEXT"); err != nil {
+			return err
+		}
+	}
+
+	if !cols["attachment_id"] {
+		if err := d.rebuildMessagesWithAttachmentID(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rebuildMessagesWithAttachmentID rebuilds a legacy messages table (PK on
+// ogmessage_id only) into the composite-PK shape. SQLite cannot alter a primary
+// key in place, so this creates the new table, copies every row with
+// attachment_id 0, drops the old table, and renames — all inside a transaction.
+func (d *DB) rebuildMessagesWithAttachmentID() error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return fmt.Errorf("db: begin messages rebuild: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rolled back only if Commit didn't run
+
+	stmts := []string{
+		`CREATE TABLE messages_new (
+			ogmessage_id INTEGER NOT NULL,
+			attachment_id INTEGER NOT NULL DEFAULT 0,
+			replymessage_jump_url TEXT,
+			replymessage_id INTEGER,
+			author_id INTEGER,
+			channel_id INTEGER,
+			guild_id INTEGER,
+			roundness REAL,
+			labels_json TEXT,
+			image_filename TEXT,
+			PRIMARY KEY (ogmessage_id, attachment_id)
+		)`,
+		`INSERT INTO messages_new
+			(ogmessage_id, attachment_id, replymessage_jump_url, replymessage_id,
+			 author_id, channel_id, guild_id, roundness, labels_json, image_filename)
+		 SELECT
+			ogmessage_id, 0, replymessage_jump_url, replymessage_id,
+			author_id, channel_id, guild_id, roundness, labels_json, image_filename
+		 FROM messages`,
+		`DROP TABLE messages`,
+		`ALTER TABLE messages_new RENAME TO messages`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("db: rebuild messages: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db: commit messages rebuild: %w", err)
+	}
+	return nil
+}
+
+// tableColumns returns the set of column names present on a table.
+func (d *DB) tableColumns(table string) (map[string]bool, error) {
 	rows, err := d.sql.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
-		return fmt.Errorf("db: inspect %s columns: %w", table, err)
+		return nil, fmt.Errorf("db: inspect %s columns: %w", table, err)
 	}
 	defer rows.Close()
+	cols := map[string]bool{}
 	for rows.Next() {
 		var (
 			cid        int
@@ -132,14 +213,23 @@ func (d *DB) ensureColumn(table, column, decl string) error {
 			primaryKey int
 		)
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &primaryKey); err != nil {
-			return fmt.Errorf("db: scan %s column: %w", table, err)
+			return nil, fmt.Errorf("db: scan %s column: %w", table, err)
 		}
-		if name == column {
-			return rows.Err() // already present
-		}
+		cols[name] = true
 	}
-	if err := rows.Err(); err != nil {
+	return cols, rows.Err()
+}
+
+// ensureColumn adds a column to a table if it is not already present. Used for
+// additive, backward-compatible migrations against a pre-existing DB file
+// (SQLite has no "ADD COLUMN IF NOT EXISTS", so we check PRAGMA table_info).
+func (d *DB) ensureColumn(table, column, decl string) error {
+	cols, err := d.tableColumns(table)
+	if err != nil {
 		return err
+	}
+	if cols[column] {
+		return nil
 	}
 	if _, err := d.sql.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl)); err != nil {
 		return fmt.Errorf("db: add column %s.%s: %w", table, column, err)

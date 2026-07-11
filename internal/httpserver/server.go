@@ -6,6 +6,7 @@ package httpserver
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hawawa4/breadbotdiscord/internal/db"
@@ -23,6 +24,7 @@ type Server struct {
 	token         string // shared-secret auth; empty disables auth
 	basePath      string // URL mount prefix (e.g. "/breadbot"); empty = root
 	downloadsPath string // root under which predictions/ and plots/ live
+	debug         bool   // when true, enable permissive CORS for local dev
 	http          *http.Server
 }
 
@@ -30,9 +32,11 @@ type Server struct {
 // off). basePath is the URL prefix the server is mounted under behind a reverse
 // proxy (empty = root); it must already be normalized (leading slash, no
 // trailing slash) as config.Load does. downloadsPath is where the bot writes
-// prediction/plot images, served read-only under /api/images.
-func New(addr string, database *db.DB, bot BotStatus, token, basePath, downloadsPath string) *Server {
-	s := &Server{db: database, bot: bot, token: token, basePath: basePath, downloadsPath: downloadsPath}
+// prediction/plot images, served read-only under /api/images. debug enables
+// permissive CORS so the Vite dev server can call the API cross-origin; it is
+// never on in production (where the SPA is same-origin embedded).
+func New(addr string, database *db.DB, bot BotStatus, token, basePath, downloadsPath string, debug bool) *Server {
+	s := &Server{db: database, bot: bot, token: token, basePath: basePath, downloadsPath: downloadsPath, debug: debug}
 	s.http = &http.Server{
 		Addr:              addr,
 		Handler:           s.handler(),
@@ -41,19 +45,41 @@ func New(addr string, database *db.DB, bot BotStatus, token, basePath, downloads
 	return s
 }
 
-// handler wraps the route mux with base-path handling. When mounted under a
-// prefix, the reverse proxy forwards the full "/breadbot/..." path; we strip it
-// once here so every route pattern in routes() stays prefix-agnostic. healthz
-// is also registered at the bare root so infra health checks don't need to know
-// the subpath.
+// handler wraps the route mux with base-path handling and (in debug) CORS. When
+// mounted under a prefix, the reverse proxy forwards the full "/breadbot/..."
+// path; we strip it once here so every route pattern in routes() stays
+// prefix-agnostic. healthz is also registered at the bare root so infra health
+// checks don't need to know the subpath.
 func (s *Server) handler() http.Handler {
+	var h http.Handler
 	if s.basePath == "" {
-		return s.routes()
+		h = s.routes()
+	} else {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /healthz", s.handleHealthz)
+		mux.Handle(s.basePath+"/", http.StripPrefix(s.basePath, s.routes()))
+		h = mux
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.Handle(s.basePath+"/", http.StripPrefix(s.basePath, s.routes()))
-	return mux
+	return s.withCORS(h)
+}
+
+// withCORS adds permissive CORS headers for local development only (gated on
+// debug). In production the SPA is served same-origin from this process, so no
+// CORS is needed or wanted. It also short-circuits preflight OPTIONS requests.
+func (s *Server) withCORS(next http.Handler) http.Handler {
+	if !s.debug {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // routes builds the mux. Go 1.22+ pattern matching gives us {id} path params
@@ -72,6 +98,17 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/messages/{ogmessage_id}", s.auth(s.handleMessage))
 	mux.HandleFunc("GET /api/images/predictions/{name}", s.auth(s.handleImage(imageKindPredictions)))
 	mux.HandleFunc("GET /api/images/plots/{name}", s.auth(s.handleImage(imageKindPlots)))
+
+	// Catch-all: serve the embedded SPA for everything else. This "/" pattern is
+	// the lowest-priority match, so all specific routes above win. Unmatched
+	// /api/* paths must still 404 as JSON (not fall through to index.html).
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		s.spaHandler()(w, r)
+	})
 	return mux
 }
 

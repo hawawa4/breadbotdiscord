@@ -2,8 +2,8 @@
 
 A Discord bot that detects bread in posted images, scores its "roundness" via an
 inference microservice, and tracks per-user and server-wide leaderboards. It also
-serves a thin **read-only HTTP stats API** alongside the bot for building an admin
-panel on top.
+serves a **read-only HTTP stats API** and an embedded **web UI** (leaderboard,
+per-user charts, image gallery) alongside the bot, in the same process.
 
 This is the Go port of the original Python (discord.py) bot; behavior is preserved.
 
@@ -15,17 +15,22 @@ This is the Go port of the original Python (discord.py) bot; behavior is preserv
   `BREAD_DETECTION_CONFIDENCE`, replies with a verdict (and an annotated image +
   roundness, when available), records the result, and caches the full response
   in memory (see below).
+- **Multiple images per message** — every image attachment on a post is
+  downloaded, inferred, and scored **independently**. Each is stored as its own
+  row and its own gallery image, so a message with several loaves produces
+  several distinct results rather than only counting the last one.
 - **"Are you sure?" retry** — reply to one of the bot's messages with "are you
   sure" / "no way" and it re-renders the verdict at the lower
   `OVERRIDE_DETECTION_CONFIDENCE`, so borderline breads pass and every label is
-  mentioned. The result is attributed to the original post.
+  mentioned. It re-renders every image of the original post, and the result is
+  attributed to that post.
 - **Prediction cache** — the inference service does its best single-pass
   detection and returns everything, so re-running it yields the same result.
   The bot therefore keeps the last 8 full predictions in an in-memory LRU keyed
-  by the original message. An "are you sure" retry re-renders straight from this
-  cache (reusing the already-annotated image, no second inference call). On a
-  cache miss — e.g. after a restart or once 8 newer posts have evicted it — it
-  falls back to a fresh inference run at the relaxed confidence.
+  by `(message, attachment)`. An "are you sure" retry re-renders straight from
+  this cache (reusing the already-annotated image, no second inference call). On
+  a cache miss — e.g. after a restart or once 8 newer predictions have evicted
+  it — it falls back to a fresh inference run at the relaxed confidence.
 - **Catch up on startup** — the bot records the timestamp of the last message it
   processed. After (re)connecting it scans the most recent `CATCH_UP_LIMIT`
   messages in each bread channel and replays any posted after that timestamp
@@ -55,12 +60,13 @@ is required; everything else has a default.
 | `BREAD_DETECTION_CONFIDENCE` | `0.5` | min "bread" confidence to count as bread (and gate label mentions) |
 | `OVERRIDE_DETECTION_CONFIDENCE` | `0.05` | relaxed threshold used on an "are you sure" retry |
 | `CATCH_UP_LIMIT` | `50` | on startup, messages per bread channel to scan for ones missed while offline (`0` disables) |
-| `DB_DATA_PATH` | `dbdata/messages.db` | SQLite file (reused from the Python bot) |
-| `DOWNLOADS_PATH` | `downloads/` | attachments, plots, annotated images |
+| `DB_DATA_PATH` | `dbdata/messages.db` | SQLite file (reused from the Python bot; auto-migrated on open) |
+| `DOWNLOADS_PATH` | `downloads/` | attachments, plots, annotated images (the gallery serves `predictions/` + `plots/` from here) |
 | `INFERENCE_SERVICE_URL` | `http://localhost:8000` | microservice base URL |
-| `ADMIN_API_ADDR` | `:8080` | stats API listen address |
+| `ADMIN_API_ADDR` | `:8080` | HTTP server listen address (API + web UI) |
 | `ADMIN_API_TOKEN` | _(unset)_ | if set, `/api/*` requires `Authorization: Bearer <token>` |
-| `DEBUG` | `false` | verbose logging |
+| `BASE_PATH` | _(unset)_ | URL prefix when served under a subpath behind a reverse proxy, e.g. `/breadbot` (leading slash added, trailing trimmed) |
+| `DEBUG` | `false` | verbose logging; also enables permissive CORS for a local frontend dev server |
 
 ## Run locally
 
@@ -136,20 +142,31 @@ reaches the inference service at `http://breadvision:8000`, and the stats API is
 exposed on `:8080`. For a registry-based deploy, set `KO_DOCKER_REPO` to your
 registry and update the `image:` reference in the compose file to the pushed tag.
 
-## Read-only HTTP API
+## Web UI + HTTP API
 
-Runs in the same process as the bot. All responses are JSON.
+Both run in the same process as the bot, on `ADMIN_API_ADDR`. The web UI is a
+single-page app compiled into the binary via `go:embed`
+(`internal/httpserver/frontend/dist`) and served at the root; the JSON API lives
+under `/api`. When `BASE_PATH` is set, everything is mounted under that prefix
+and the reverse proxy forwards the full path (the server strips the prefix once).
+
+`/healthz` is always unauthenticated (and reachable at both the root and the
+prefix so infra health checks don't need to know the subpath). `/api/*` requires
+`Authorization: Bearer <ADMIN_API_TOKEN>` only when that token is set. All API
+responses are JSON. **Discord snowflake ids are serialized as JSON strings**, not
+numbers, so a browser client doesn't lose precision above 2^53.
 
 | Endpoint | Description |
 |---|---|
 | `GET /healthz` | liveness — reports DB reachable + Discord session ready |
-| `GET /api/leaderboard?order=max\|min&n=` | server roundness leaderboard |
+| `GET /api/stats/summary` | server-wide aggregates (scored count, distinct users, avg/max roundness) |
+| `GET /api/leaderboard?order=max\|min&n=` | server roundness leaderboard (`n` clamped 1..100) |
+| `GET /api/users?limit=&offset=` | paginated user directory (`limit` clamped 1..200) |
 | `GET /api/users/{id}/roundness` | a user's min/max + last-50 history |
 | `GET /api/users/{id}` | cached user info |
-| `GET /api/messages/{ogmessage_id}` | a single message's stats |
-
-`/healthz` is always unauthenticated; `/api/*` requires the bearer token only when
-`ADMIN_API_TOKEN` is set.
+| `GET /api/messages/{ogmessage_id}` | a message's per-image stats (`{ogmessage_id, rows:[...]}`) |
+| `GET /api/images/predictions/{name}` | an annotated prediction PNG from `DOWNLOADS_PATH/predictions/` |
+| `GET /api/images/plots/{name}` | a roundness-history plot PNG from `DOWNLOADS_PATH/plots/` |
 
 ## Layout
 
@@ -160,5 +177,11 @@ internal/db/         SQLite layer (shared by bot and HTTP server)
 internal/inference/  microservice HTTP client
 internal/bot/        discordgo session, message routing, bread pipeline, commands
 internal/stats/      roundness-history PNG chart
-internal/httpserver/ read-only stats API
+internal/httpserver/ HTTP server: read-only stats API + embedded web UI
+  frontend/dist/     compiled SPA embedded via go:embed (built from frontend/)
 ```
+
+The web UI source lives at the repo root in `frontend/` (a Svelte app); its
+build output is written to `internal/httpserver/frontend/dist/` so `go:embed`
+can compile it into the binary. A committed placeholder `index.html` keeps a
+clean checkout building before the SPA is ever built.

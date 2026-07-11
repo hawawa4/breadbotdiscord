@@ -7,11 +7,17 @@ import (
 
 // Message mirrors a row in the `messages` table.
 //
+// A row is one image attachment of a Discord message: the primary key is the
+// composite (OgMessageID, AttachmentID). A message with several images has
+// several rows, each scored independently. Legacy rows migrated from the
+// single-key schema have AttachmentID 0.
+//
 // Roundness and Labels are nullable in the schema (a message can have discord
 // info persisted before inference results, or vice versa). Roundness uses
 // sql.NullFloat64; Labels is nil when labels_json is NULL/empty.
 type Message struct {
 	OgMessageID         int64
+	AttachmentID        int64
 	ReplyMessageJumpURL string
 	ReplyMessageID      int64
 	AuthorID            int64
@@ -25,7 +31,7 @@ type Message struct {
 }
 
 // messageColumns is the fixed column order used by every SELECT and by scanRow.
-const messageColumns = "ogmessage_id,replymessage_jump_url,replymessage_id,author_id,channel_id,guild_id,roundness,labels_json,image_filename"
+const messageColumns = "ogmessage_id,attachment_id,replymessage_jump_url,replymessage_id,author_id,channel_id,guild_id,roundness,labels_json,image_filename"
 
 // selectMessages is the base SELECT for the messages table.
 const selectMessages = "SELECT " + messageColumns + " FROM messages"
@@ -34,16 +40,17 @@ const selectMessages = "SELECT " + messageColumns + " FROM messages"
 // Nullable text/int columns are tolerated via sql.Null* scanning.
 func scanMessage(s interface{ Scan(...any) error }) (Message, error) {
 	var (
-		m           Message
-		jumpURL     sql.NullString
-		replyID     sql.NullInt64
-		authorID    sql.NullInt64
-		channelID   sql.NullInt64
-		guildID     sql.NullInt64
-		labelsJSON  sql.NullString
+		m          Message
+		jumpURL    sql.NullString
+		replyID    sql.NullInt64
+		authorID   sql.NullInt64
+		channelID  sql.NullInt64
+		guildID    sql.NullInt64
+		labelsJSON sql.NullString
 	)
 	if err := s.Scan(
 		&m.OgMessageID,
+		&m.AttachmentID,
 		&jumpURL,
 		&replyID,
 		&authorID,

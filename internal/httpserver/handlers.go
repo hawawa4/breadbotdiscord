@@ -16,6 +16,7 @@ import (
 // so a JS/browser client parsing them as numbers would silently corrupt them.
 type messageDTO struct {
 	OgMessageID         int64              `json:"ogmessage_id,string"`
+	AttachmentID        int64              `json:"attachment_id,string"`
 	ReplyMessageJumpURL string             `json:"replymessage_jump_url"`
 	ReplyMessageID      int64              `json:"replymessage_id,string"`
 	AuthorID            int64              `json:"author_id,string"`
@@ -32,6 +33,7 @@ type messageDTO struct {
 func toMessageDTO(m db.Message) messageDTO {
 	dto := messageDTO{
 		OgMessageID:         m.OgMessageID,
+		AttachmentID:        m.AttachmentID,
 		ReplyMessageJumpURL: m.ReplyMessageJumpURL,
 		ReplyMessageID:      m.ReplyMessageID,
 		AuthorID:            m.AuthorID,
@@ -179,13 +181,16 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMessage returns a single message's stats.
+// handleMessage returns a message's per-image stats. A message can carry
+// several image attachments, each scored independently, so the response is an
+// object with a rows array (one messageDTO per attachment, ordered by
+// attachment id).
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "ogmessage_id")
 	if !ok {
 		return
 	}
-	m, err := s.db.GetMessage(id)
+	msgs, err := s.db.GetMessage(id)
 	if errors.Is(err, db.ErrUserNotFound) {
 		writeError(w, http.StatusNotFound, "message not found")
 		return
@@ -194,7 +199,14 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, toMessageDTO(m))
+	rows := make([]messageDTO, len(msgs))
+	for i, m := range msgs {
+		rows[i] = toMessageDTO(m)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ogmessage_id": strconv.FormatInt(id, 10),
+		"rows":         rows,
+	})
 }
 
 // handleStatsSummary returns server-wide aggregate stats for the dashboard.

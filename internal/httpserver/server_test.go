@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hawawa4/breadbotdiscord/internal/db"
@@ -58,7 +59,7 @@ func newTestServer(t *testing.T, botReady bool) *Server {
 		t.Fatalf("write fixture image: %v", err)
 	}
 
-	return New(":0", database, fakeBot{ready: botReady}, "", "", downloads)
+	return New(":0", database, fakeBot{ready: botReady}, "", "", downloads, false)
 }
 
 func doGET(t *testing.T, s *Server, path string) (*http.Response, []byte) {
@@ -200,15 +201,30 @@ func TestGetMessage(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", res.StatusCode, body)
 	}
-	var out messageDTO
-	json.Unmarshal(body, &out)
-	if out.OgMessageID != roundestOgID {
-		t.Errorf("og id = %d, want %d", out.OgMessageID, roundestOgID)
+	var out struct {
+		OgMessageID string       `json:"ogmessage_id"`
+		Rows        []messageDTO `json:"rows"`
 	}
-	if out.Roundness == nil {
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.OgMessageID != strconv.FormatInt(roundestOgID, 10) {
+		t.Errorf("ogmessage_id = %q, want %q", out.OgMessageID, strconv.FormatInt(roundestOgID, 10))
+	}
+	if len(out.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (migrated single-image fixture row)", len(out.Rows))
+	}
+	m := out.Rows[0]
+	if m.OgMessageID != roundestOgID {
+		t.Errorf("row og id = %d, want %d", m.OgMessageID, roundestOgID)
+	}
+	if m.AttachmentID != 0 {
+		t.Errorf("migrated row attachment_id = %d, want 0", m.AttachmentID)
+	}
+	if m.Roundness == nil {
 		t.Error("roundness should be present")
 	}
-	if out.Labels["bread"] <= 0 {
+	if m.Labels["bread"] <= 0 {
 		t.Error("expected positive bread label")
 	}
 }
@@ -250,13 +266,24 @@ func TestIDsSerializedAsStrings(t *testing.T) {
 	if got != "1419411009986367640" {
 		t.Errorf("ogmessage_id = %q, want exact snowflake string", got)
 	}
-	// And it still decodes back into the typed DTO via the ,string tag.
-	var dto messageDTO
-	if err := json.Unmarshal(body, &dto); err != nil {
+	// The row's id fields are strings too, and still decode back into the typed
+	// DTO via the ,string tag without precision loss.
+	var wrap struct {
+		Rows []messageDTO `json:"rows"`
+	}
+	if err := json.Unmarshal(body, &wrap); err != nil {
 		t.Fatalf("decode dto: %v", err)
 	}
-	if dto.OgMessageID != roundestOgID {
-		t.Errorf("og id = %d, want %d", dto.OgMessageID, roundestOgID)
+	if len(wrap.Rows) != 1 || wrap.Rows[0].OgMessageID != roundestOgID {
+		t.Errorf("rows[0] og id round-trip failed: %+v", wrap.Rows)
+	}
+	// The raw row ID must be a JSON string, not a number.
+	rows, _ := raw["rows"].([]any)
+	if len(rows) == 0 {
+		t.Fatal("no rows in response")
+	}
+	if _, ok := rows[0].(map[string]any)["ogmessage_id"].(string); !ok {
+		t.Errorf("row ogmessage_id is %T, want string", rows[0].(map[string]any)["ogmessage_id"])
 	}
 }
 
@@ -411,6 +438,77 @@ func TestSafeImageName(t *testing.T) {
 		if safeImageName(n) {
 			t.Errorf("safeImageName(%q) = true, want false", n)
 		}
+	}
+}
+
+func TestSPAServesIndex(t *testing.T) {
+	s := newTestServer(t, true)
+	// Root and an unknown client-route path both serve the SPA entry document.
+	for _, path := range []string{"/", "/leaderboard", "/users/123"} {
+		res, body := doGET(t, s, path)
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, res.StatusCode)
+			continue
+		}
+		if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("GET %s content-type = %q, want text/html", path, ct)
+		}
+		if !strings.Contains(string(body), "BreadBot") {
+			t.Errorf("GET %s did not serve SPA index (body=%.60q)", path, body)
+		}
+	}
+}
+
+func TestSPADoesNotShadowAPI(t *testing.T) {
+	// An unknown /api path must 404 as JSON, not fall through to the SPA index.
+	s := newTestServer(t, true)
+	res, body := doGET(t, s, "/api/does-not-exist")
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	if strings.Contains(string(body), "<h1>") {
+		t.Errorf("unknown /api path served SPA HTML: %.60q", body)
+	}
+}
+
+func TestSPAUnderBasePath(t *testing.T) {
+	s := newTestServer(t, true)
+	s.basePath = "/breadbot"
+	h := s.handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/breadbot/some/client/route", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("prefixed SPA route = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "BreadBot") {
+		t.Errorf("prefixed SPA did not serve index")
+	}
+}
+
+func TestCORSDebugGated(t *testing.T) {
+	// CORS headers only appear when debug is on.
+	off := newTestServer(t, true) // debug=false via helper
+	res, _ := doGET(t, off, "/api/stats/summary")
+	if h := res.Header.Get("Access-Control-Allow-Origin"); h != "" {
+		t.Errorf("CORS header present with debug off: %q", h)
+	}
+
+	on := newTestServer(t, true)
+	on.debug = true
+	rec := httptest.NewRecorder()
+	on.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/stats/summary", nil))
+	if h := rec.Header().Get("Access-Control-Allow-Origin"); h != "*" {
+		t.Errorf("CORS origin = %q, want * with debug on", h)
+	}
+
+	// Preflight OPTIONS is short-circuited with 204.
+	rec = httptest.NewRecorder()
+	on.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/api/stats/summary", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("OPTIONS status = %d, want 204", rec.Code)
 	}
 }
 

@@ -18,19 +18,21 @@ type BotStatus interface {
 
 // Server holds the dependencies for the read-only API.
 type Server struct {
-	db       *db.DB
-	bot      BotStatus
-	token    string // shared-secret auth; empty disables auth
-	basePath string // URL mount prefix (e.g. "/breadbot"); empty = root
-	http     *http.Server
+	db            *db.DB
+	bot           BotStatus
+	token         string // shared-secret auth; empty disables auth
+	basePath      string // URL mount prefix (e.g. "/breadbot"); empty = root
+	downloadsPath string // root under which predictions/ and plots/ live
+	http          *http.Server
 }
 
 // New builds a Server. token is the optional ADMIN_API_TOKEN (empty = auth
 // off). basePath is the URL prefix the server is mounted under behind a reverse
 // proxy (empty = root); it must already be normalized (leading slash, no
-// trailing slash) as config.Load does.
-func New(addr string, database *db.DB, bot BotStatus, token, basePath string) *Server {
-	s := &Server{db: database, bot: bot, token: token, basePath: basePath}
+// trailing slash) as config.Load does. downloadsPath is where the bot writes
+// prediction/plot images, served read-only under /api/images.
+func New(addr string, database *db.DB, bot BotStatus, token, basePath, downloadsPath string) *Server {
+	s := &Server{db: database, bot: bot, token: token, basePath: basePath, downloadsPath: downloadsPath}
 	s.http = &http.Server{
 		Addr:              addr,
 		Handler:           s.handler(),
@@ -63,9 +65,13 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 
 	mux.HandleFunc("GET /api/leaderboard", s.auth(s.handleLeaderboard))
+	mux.HandleFunc("GET /api/stats/summary", s.auth(s.handleStatsSummary))
+	mux.HandleFunc("GET /api/users", s.auth(s.handleUsers))
 	mux.HandleFunc("GET /api/users/{id}/roundness", s.auth(s.handleUserRoundness))
 	mux.HandleFunc("GET /api/users/{id}", s.auth(s.handleUser))
 	mux.HandleFunc("GET /api/messages/{ogmessage_id}", s.auth(s.handleMessage))
+	mux.HandleFunc("GET /api/images/predictions/{name}", s.auth(s.handleImage(imageKindPredictions)))
+	mux.HandleFunc("GET /api/images/plots/{name}", s.auth(s.handleImage(imageKindPlots)))
 	return mux
 }
 

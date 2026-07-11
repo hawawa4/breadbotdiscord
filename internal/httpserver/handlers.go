@@ -23,6 +23,10 @@ type messageDTO struct {
 	GuildID             int64              `json:"guild_id,string"`
 	Roundness           *float64           `json:"roundness"`
 	Labels              map[string]float64 `json:"labels"`
+	// AnnotatedImage is the basename of the annotated prediction PNG, or null if
+	// none was produced/persisted for this message. The client builds the URL as
+	// <base>/api/images/predictions/<AnnotatedImage>.
+	AnnotatedImage *string `json:"annotated_image"`
 }
 
 func toMessageDTO(m db.Message) messageDTO {
@@ -38,6 +42,10 @@ func toMessageDTO(m db.Message) messageDTO {
 	if m.Roundness.Valid {
 		r := m.Roundness.Float64
 		dto.Roundness = &r
+	}
+	if m.ImageFilename.Valid && m.ImageFilename.String != "" {
+		f := m.ImageFilename.String
+		dto.AnnotatedImage = &f
 	}
 	return dto
 }
@@ -187,6 +195,91 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toMessageDTO(m))
+}
+
+// handleStatsSummary returns server-wide aggregate stats for the dashboard.
+func (s *Server) handleStatsSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.db.GetStatsSummary()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scored_count":   summary.ScoredCount,
+		"distinct_users": summary.DistinctUsers,
+		"avg_roundness":  summary.AvgRoundness,
+		"max_roundness":  summary.MaxRoundness,
+	})
+}
+
+// userDTO is the JSON shape for a discord user. author_id is a string for the
+// same snowflake-precision reason as messageDTO.
+type userDTO struct {
+	AuthorID       int64   `json:"author_id,string"`
+	AuthorName     string  `json:"author_name"`
+	AuthorNickname *string `json:"author_nickname"`
+}
+
+func toUserDTO(u db.User) userDTO {
+	dto := userDTO{AuthorID: u.AuthorID, AuthorName: u.AuthorName}
+	if u.AuthorNickname.Valid {
+		n := u.AuthorNickname.String
+		dto.AuthorNickname = &n
+	}
+	return dto
+}
+
+// handleUsers returns a paginated user directory.
+// Query params: limit (default 50, clamped 1..200), offset (default 0).
+func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "limit must be an integer")
+			return
+		}
+		limit = parsed
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	offset := 0
+	if v := r.URL.Query().Get("offset"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "offset must be an integer")
+			return
+		}
+		if parsed > 0 {
+			offset = parsed
+		}
+	}
+
+	users, err := s.db.ListUsers(limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	total, err := s.db.CountUsers()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	out := make([]userDTO, len(users))
+	for i, u := range users {
+		out[i] = toUserDTO(u)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"limit":  limit,
+		"offset": offset,
+		"total":  total,
+		"rows":   out,
+	})
 }
 
 // pathID parses an int64 path parameter, writing a 400 and returning false on

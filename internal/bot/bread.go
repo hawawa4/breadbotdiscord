@@ -222,8 +222,16 @@ func (b *Bot) deliverBreadMessage(s *discordgo.Session, target *discordgo.Messag
 	if pred.Roundness != nil {
 		roundness = *pred.Roundness
 	}
+	// The annotated PNG is saved under downloads/predictions/ only when the
+	// service returned an image; outFile is that annotated path in exactly that
+	// case (see renderBreadMessage). Persist its basename so the HTTP API/gallery
+	// can link the message to its image; leave empty (→ NULL) otherwise.
+	var imageFilename string
+	if pred.Image != nil {
+		imageFilename = filepath.Base(outFile)
+	}
 	ogID := mustParseID(target.ID)
-	if err := b.db.UpsertMessageStats(ogID, roundness, pred.Labels); err != nil {
+	if err := b.db.UpsertMessageStats(ogID, roundness, pred.Labels, imageFilename); err != nil {
 		return fmt.Errorf("persist stats: %w", err)
 	}
 	if err := b.db.UpsertMessageDiscordInfo(

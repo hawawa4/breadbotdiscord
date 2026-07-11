@@ -71,7 +71,7 @@ func run() error {
 	}
 
 	// Start the read-only HTTP server in a goroutine.
-	srv := httpserver.New(cfg.AdminAPIAddr, database, discordBot, cfg.AdminAPIToken, cfg.BasePath)
+	srv := httpserver.New(cfg.AdminAPIAddr, database, discordBot, cfg.AdminAPIToken, cfg.BasePath, cfg.DownloadsPath)
 	go func() {
 		slog.Info("http server listening", "addr", cfg.AdminAPIAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

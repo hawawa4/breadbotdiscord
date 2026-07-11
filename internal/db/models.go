@@ -19,10 +19,13 @@ type Message struct {
 	GuildID             int64
 	Roundness           sql.NullFloat64
 	Labels              map[string]float64
+	// ImageFilename is the basename of the annotated prediction PNG saved under
+	// downloads/predictions/, or invalid if none was produced/persisted.
+	ImageFilename sql.NullString
 }
 
 // messageColumns is the fixed column order used by every SELECT and by scanRow.
-const messageColumns = "ogmessage_id,replymessage_jump_url,replymessage_id,author_id,channel_id,guild_id,roundness,labels_json"
+const messageColumns = "ogmessage_id,replymessage_jump_url,replymessage_id,author_id,channel_id,guild_id,roundness,labels_json,image_filename"
 
 // selectMessages is the base SELECT for the messages table.
 const selectMessages = "SELECT " + messageColumns + " FROM messages"
@@ -48,6 +51,7 @@ func scanMessage(s interface{ Scan(...any) error }) (Message, error) {
 		&guildID,
 		&m.Roundness,
 		&labelsJSON,
+		&m.ImageFilename,
 	); err != nil {
 		return Message{}, err
 	}

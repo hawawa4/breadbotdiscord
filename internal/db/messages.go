@@ -8,20 +8,23 @@ import (
 )
 
 // UpsertMessageStats inserts or updates the inference results (roundness +
-// labels) for a message, keyed on ogmessage_id. labels is serialized to a JSON
-// string. Mirrors upsert_message_stats.
-func (d *DB) UpsertMessageStats(ogMessageID int64, roundness float64, labels map[string]float64) error {
+// labels + annotated-image filename) for a message, keyed on ogmessage_id.
+// labels is serialized to a JSON string. imageFilename is the basename of the
+// annotated PNG under downloads/predictions/, or "" when none was produced (in
+// which case the column is left NULL). Mirrors upsert_message_stats.
+func (d *DB) UpsertMessageStats(ogMessageID int64, roundness float64, labels map[string]float64, imageFilename string) error {
 	labelsJSON, err := json.Marshal(labels)
 	if err != nil {
 		return fmt.Errorf("db: marshal labels: %w", err)
 	}
 	const q = `
-	INSERT INTO messages (ogmessage_id, roundness, labels_json)
-	VALUES (?, ?, ?)
+	INSERT INTO messages (ogmessage_id, roundness, labels_json, image_filename)
+	VALUES (?, ?, ?, ?)
 	ON CONFLICT(ogmessage_id) DO UPDATE SET
 		roundness=excluded.roundness,
-		labels_json=excluded.labels_json`
-	if _, err := d.sql.Exec(q, ogMessageID, roundness, string(labelsJSON)); err != nil {
+		labels_json=excluded.labels_json,
+		image_filename=excluded.image_filename`
+	if _, err := d.sql.Exec(q, ogMessageID, roundness, string(labelsJSON), nullString(imageFilename)); err != nil {
 		return fmt.Errorf("db: upsert message stats: %w", err)
 	}
 	return nil
@@ -128,6 +131,35 @@ func (d *DB) roundnessLeaderboard(n int, order OrderBy) ([]Message, error) {
 		result = append(result, m)
 	}
 	return result, rows.Err()
+}
+
+// StatsSummary holds server-wide aggregate stats for the dashboard header.
+// AvgRoundness/MaxRoundness are only meaningful when ScoredCount > 0.
+type StatsSummary struct {
+	ScoredCount  int     // messages with a real (non-null, non-zero) roundness
+	DistinctUsers int    // distinct authors among scored messages
+	AvgRoundness float64 // mean roundness over scored messages
+	MaxRoundness float64 // highest roundness over scored messages
+}
+
+// GetStatsSummary returns server-wide aggregates over messages that have a real
+// roundness score. It applies the same "roundness NOT NULL AND != 0" filter as
+// the leaderboard/history queries (a 0 means the shape couldn't be computed).
+func (d *DB) GetStatsSummary() (StatsSummary, error) {
+	const q = `
+	SELECT
+		COUNT(*),
+		COUNT(DISTINCT author_id),
+		COALESCE(AVG(roundness), 0),
+		COALESCE(MAX(roundness), 0)
+	FROM messages
+	WHERE roundness NOT NULL AND roundness != 0`
+	var s StatsSummary
+	err := d.sql.QueryRow(q).Scan(&s.ScoredCount, &s.DistinctUsers, &s.AvgRoundness, &s.MaxRoundness)
+	if err != nil {
+		return StatsSummary{}, fmt.Errorf("db: stats summary: %w", err)
+	}
+	return s, nil
 }
 
 // RoundnessPoint is one point in a user's roundness history: a 1-based index

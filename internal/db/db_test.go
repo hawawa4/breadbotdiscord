@@ -179,7 +179,7 @@ func TestZeroRoundnessExcluded(t *testing.T) {
 	// sort first in history (newest) and its 0 would sort as the very "worst"
 	// if the != 0 filter were missing.
 	const zeroOgID = int64(9999999999999999)
-	if err := d.UpsertMessageStats(zeroOgID, 0, map[string]float64{"bread": 0.9}); err != nil {
+	if err := d.UpsertMessageStats(zeroOgID, 0, map[string]float64{"bread": 0.9}, ""); err != nil {
 		t.Fatalf("UpsertMessageStats(0): %v", err)
 	}
 	if err := d.UpsertMessageDiscordInfo(zeroOgID, "url", 1, userWithHistory, 1, 1); err != nil {
@@ -230,7 +230,7 @@ func TestZeroRoundnessExcluded(t *testing.T) {
 func TestUpsertMessageStatsRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	labels := map[string]float64{"bread": 0.9, "round": 0.5}
-	if err := d.UpsertMessageStats(roundestOgID, 0.77, labels); err != nil {
+	if err := d.UpsertMessageStats(roundestOgID, 0.77, labels, "loaf.png"); err != nil {
 		t.Fatalf("UpsertMessageStats: %v", err)
 	}
 	m, err := d.GetMessage(roundestOgID)
@@ -242,6 +242,21 @@ func TestUpsertMessageStatsRoundTrip(t *testing.T) {
 	}
 	if m.Labels["bread"] != 0.9 {
 		t.Errorf("labels[bread] = %v, want 0.9", m.Labels["bread"])
+	}
+	if !m.ImageFilename.Valid || m.ImageFilename.String != "loaf.png" {
+		t.Errorf("image_filename = %q (valid=%v), want \"loaf.png\"", m.ImageFilename.String, m.ImageFilename.Valid)
+	}
+
+	// An empty filename must round-trip as NULL, not an empty string.
+	if err := d.UpsertMessageStats(roundestOgID, 0.77, labels, ""); err != nil {
+		t.Fatalf("UpsertMessageStats(empty img): %v", err)
+	}
+	m, err = d.GetMessage(roundestOgID)
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if m.ImageFilename.Valid {
+		t.Errorf("image_filename should be NULL for empty input, got %q", m.ImageFilename.String)
 	}
 }
 

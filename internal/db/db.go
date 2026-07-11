@@ -75,7 +75,8 @@ func (d *DB) createSchema() error {
 		channel_id INTEGER,
 		guild_id INTEGER,
 		roundness REAL,
-		labels_json TEXT
+		labels_json TEXT,
+		image_filename TEXT
 	)`
 	const createUsers = `
 	CREATE TABLE IF NOT EXISTS discordusers (
@@ -101,6 +102,47 @@ func (d *DB) createSchema() error {
 	}
 	if _, err := d.sql.Exec(createBotState); err != nil {
 		return fmt.Errorf("db: create botstate table: %w", err)
+	}
+
+	// Backward-compatible migration: image_filename is in the CREATE above for
+	// fresh DBs, but an existing (pre-frontend) DB file won't have it. Add it
+	// idempotently. The column is nullable, so old rows simply have no linked
+	// gallery image. This keeps the "reuse the existing DB file as-is" contract.
+	if err := d.ensureColumn("messages", "image_filename", "TEXT"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureColumn adds a column to a table if it is not already present. Used for
+// additive, backward-compatible migrations against a pre-existing DB file
+// (SQLite has no "ADD COLUMN IF NOT EXISTS", so we check PRAGMA table_info).
+func (d *DB) ensureColumn(table, column, decl string) error {
+	rows, err := d.sql.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("db: inspect %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name, typ  string
+			notNull    int
+			dflt       any
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &primaryKey); err != nil {
+			return fmt.Errorf("db: scan %s column: %w", table, err)
+		}
+		if name == column {
+			return rows.Err() // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if _, err := d.sql.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl)); err != nil {
+		return fmt.Errorf("db: add column %s.%s: %w", table, column, err)
 	}
 	return nil
 }

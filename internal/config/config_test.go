@@ -33,6 +33,24 @@ func TestParseIntList(t *testing.T) {
 	}
 }
 
+func TestNormalizeBasePath(t *testing.T) {
+	cases := map[string]string{
+		"":               "",
+		"/":              "",
+		"breadbot":       "/breadbot",
+		"/breadbot":      "/breadbot",
+		"/breadbot/":     "/breadbot",
+		"  /breadbot/  ": "/breadbot",
+		"app/breadbot":   "/app/breadbot",
+		"/app/breadbot/": "/app/breadbot",
+	}
+	for in, want := range cases {
+		if got := normalizeBasePath(in); got != want {
+			t.Errorf("normalizeBasePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestParseIntListInvalid(t *testing.T) {
 	if _, err := parseIntList("[1,x,3]"); err == nil {
 		t.Error("expected error for non-numeric id, got nil")

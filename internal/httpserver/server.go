@@ -18,25 +18,45 @@ type BotStatus interface {
 
 // Server holds the dependencies for the read-only API.
 type Server struct {
-	db    *db.DB
-	bot   BotStatus
-	token string // shared-secret auth; empty disables auth
-	http  *http.Server
+	db       *db.DB
+	bot      BotStatus
+	token    string // shared-secret auth; empty disables auth
+	basePath string // URL mount prefix (e.g. "/breadbot"); empty = root
+	http     *http.Server
 }
 
-// New builds a Server. token is the optional ADMIN_API_TOKEN (empty = auth off).
-func New(addr string, database *db.DB, bot BotStatus, token string) *Server {
-	s := &Server{db: database, bot: bot, token: token}
+// New builds a Server. token is the optional ADMIN_API_TOKEN (empty = auth
+// off). basePath is the URL prefix the server is mounted under behind a reverse
+// proxy (empty = root); it must already be normalized (leading slash, no
+// trailing slash) as config.Load does.
+func New(addr string, database *db.DB, bot BotStatus, token, basePath string) *Server {
+	s := &Server{db: database, bot: bot, token: token, basePath: basePath}
 	s.http = &http.Server{
 		Addr:              addr,
-		Handler:           s.routes(),
+		Handler:           s.handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s
 }
 
+// handler wraps the route mux with base-path handling. When mounted under a
+// prefix, the reverse proxy forwards the full "/breadbot/..." path; we strip it
+// once here so every route pattern in routes() stays prefix-agnostic. healthz
+// is also registered at the bare root so infra health checks don't need to know
+// the subpath.
+func (s *Server) handler() http.Handler {
+	if s.basePath == "" {
+		return s.routes()
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.Handle(s.basePath+"/", http.StripPrefix(s.basePath, s.routes()))
+	return mux
+}
+
 // routes builds the mux. Go 1.22+ pattern matching gives us {id} path params
-// without an external router.
+// without an external router. Patterns are relative to the mount point (base
+// path already stripped by handler()).
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	// healthz is always unauthenticated.

@@ -10,13 +10,17 @@ import (
 )
 
 // messageDTO is the JSON shape for a message row.
+//
+// Discord snowflake IDs are serialized as JSON strings (the `,string` tag), not
+// numbers: real snowflakes exceed JavaScript's Number.MAX_SAFE_INTEGER (2^53),
+// so a JS/browser client parsing them as numbers would silently corrupt them.
 type messageDTO struct {
-	OgMessageID         int64              `json:"ogmessage_id"`
+	OgMessageID         int64              `json:"ogmessage_id,string"`
 	ReplyMessageJumpURL string             `json:"replymessage_jump_url"`
-	ReplyMessageID      int64              `json:"replymessage_id"`
-	AuthorID            int64              `json:"author_id"`
-	ChannelID           int64              `json:"channel_id"`
-	GuildID             int64              `json:"guild_id"`
+	ReplyMessageID      int64              `json:"replymessage_id,string"`
+	AuthorID            int64              `json:"author_id,string"`
+	ChannelID           int64              `json:"channel_id,string"`
+	GuildID             int64              `json:"guild_id,string"`
 	Roundness           *float64           `json:"roundness"`
 	Labels              map[string]float64 `json:"labels"`
 }
@@ -110,7 +114,8 @@ func (s *Server) handleUserRoundness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{"author_id": id}
+	// author_id as a string: snowflakes exceed JS's safe integer range.
+	resp := map[string]any{"author_id": strconv.FormatInt(id, 10)}
 
 	if m, err := s.db.GetMinRoundnessForUser(id); err == nil {
 		resp["min"] = toMessageDTO(m)
@@ -160,7 +165,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		nick = &n
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"author_id":       u.AuthorID,
+		"author_id":       strconv.FormatInt(u.AuthorID, 10),
 		"author_name":     u.AuthorName,
 		"author_nickname": nick,
 	})

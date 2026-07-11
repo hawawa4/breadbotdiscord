@@ -38,6 +38,10 @@ type Config struct {
 	AdminAPIToken string
 	// AdminAPIAddr is the listen address for the read-only HTTP server.
 	AdminAPIAddr string
+	// BasePath is the URL prefix the server is mounted under behind a reverse
+	// proxy (e.g. "/breadbot" for mydomain.org/breadbot). Empty = mounted at
+	// root. A leading slash is enforced and any trailing slash trimmed by Load.
+	BasePath string
 }
 
 // Load reads configuration from the environment, applying defaults that match
@@ -55,6 +59,7 @@ func Load() (*Config, error) {
 		InferenceServiceURL:         envStr("INFERENCE_SERVICE_URL", "http://localhost:8000"),
 		AdminAPIToken:               os.Getenv("ADMIN_API_TOKEN"),
 		AdminAPIAddr:                envStr("ADMIN_API_ADDR", ":8080"),
+		BasePath:                    normalizeBasePath(envStr("BASE_PATH", "")),
 	}
 
 	if c.DiscordToken == "" {
@@ -74,6 +79,19 @@ func Load() (*Config, error) {
 	c.DiscordBreadRole = roles
 
 	return c, nil
+}
+
+// normalizeBasePath canonicalizes a URL mount prefix: empty stays empty
+// (mounted at root); otherwise it is guaranteed to have a leading slash and no
+// trailing slash (e.g. "breadbot/" -> "/breadbot"). This keeps http.StripPrefix
+// and the SPA base in agreement regardless of how the env var is written.
+func normalizeBasePath(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "/")
+	if s == "" {
+		return ""
+	}
+	return "/" + s
 }
 
 // parseIntList parses the Python-style "[1,2,3]" list format into int64 ids.

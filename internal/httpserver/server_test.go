@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/hawawa4/breadbotdiscord/internal/db"
@@ -45,7 +46,7 @@ func newTestServer(t *testing.T, botReady bool) *Server {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { database.Close() })
-	return New(":0", database, fakeBot{ready: botReady}, "")
+	return New(":0", database, fakeBot{ready: botReady}, "", "")
 }
 
 func doGET(t *testing.T, s *Server, path string) (*http.Response, []byte) {
@@ -142,7 +143,7 @@ func TestUserRoundness(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", res.StatusCode, body)
 	}
 	var out struct {
-		AuthorID int64            `json:"author_id"`
+		AuthorID string           `json:"author_id"`
 		Min      *messageDTO      `json:"min"`
 		Max      *messageDTO      `json:"max"`
 		History  []map[string]any `json:"history"`
@@ -150,8 +151,8 @@ func TestUserRoundness(t *testing.T) {
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if out.AuthorID != knownUser {
-		t.Errorf("author_id = %d, want %d", out.AuthorID, knownUser)
+	if out.AuthorID != strconv.FormatInt(knownUser, 10) {
+		t.Errorf("author_id = %q, want %q", out.AuthorID, strconv.FormatInt(knownUser, 10))
 	}
 	if out.Min == nil || out.Max == nil {
 		t.Fatal("min/max should be present for known user")
@@ -213,6 +214,65 @@ func TestGetMessageBadID(t *testing.T) {
 	res, _ := doGET(t, s, "/api/messages/not-a-number")
 	if res.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", res.StatusCode)
+	}
+}
+
+// TestIDsSerializedAsStrings guards the snowflake-precision fix: IDs must come
+// over the wire as JSON strings, and a full 64-bit snowflake must survive
+// round-trip without the precision loss a JSON number would cause in JS.
+func TestIDsSerializedAsStrings(t *testing.T) {
+	s := newTestServer(t, true)
+	res, body := doGET(t, s, "/api/messages/1419411009986367640")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", res.StatusCode, body)
+	}
+	// Decode into a raw map: the ID fields must be JSON strings, not numbers.
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got, ok := raw["ogmessage_id"].(string)
+	if !ok {
+		t.Fatalf("ogmessage_id is %T, want string", raw["ogmessage_id"])
+	}
+	if got != "1419411009986367640" {
+		t.Errorf("ogmessage_id = %q, want exact snowflake string", got)
+	}
+	// And it still decodes back into the typed DTO via the ,string tag.
+	var dto messageDTO
+	if err := json.Unmarshal(body, &dto); err != nil {
+		t.Fatalf("decode dto: %v", err)
+	}
+	if dto.OgMessageID != roundestOgID {
+		t.Errorf("og id = %d, want %d", dto.OgMessageID, roundestOgID)
+	}
+}
+
+// TestBasePathRouting verifies that when mounted under a prefix, routes answer
+// under that prefix, the bare unprefixed path 404s, and healthz stays reachable
+// at the root for infra checks.
+func TestBasePathRouting(t *testing.T) {
+	s := newTestServer(t, true)
+	s.basePath = "/breadbot"
+	h := s.handler()
+
+	do := func(path string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code
+	}
+
+	if code := do("/breadbot/api/leaderboard"); code != http.StatusOK {
+		t.Errorf("prefixed leaderboard = %d, want 200", code)
+	}
+	if code := do("/api/leaderboard"); code != http.StatusNotFound {
+		t.Errorf("unprefixed leaderboard = %d, want 404", code)
+	}
+	if code := do("/healthz"); code != http.StatusOK {
+		t.Errorf("root healthz = %d, want 200", code)
+	}
+	if code := do("/breadbot/healthz"); code != http.StatusOK {
+		t.Errorf("prefixed healthz = %d, want 200", code)
 	}
 }
 

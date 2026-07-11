@@ -20,6 +20,12 @@ func mustParseID(s string) int64 {
 	return id
 }
 
+// idString renders an int64 snowflake (as stored in config/DB) back to the
+// string form the discordgo REST API expects.
+func idString(id int64) string {
+	return strconv.FormatInt(id, 10)
+}
+
 // containsID reports whether the snowflake string id is in the int64 id list.
 func containsID(ids []int64, id string) bool {
 	parsed, err := strconv.ParseInt(id, 10, 64)

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 
@@ -29,12 +30,34 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	)
 
 	b.upsertAuthor(m)
+	b.recordLastRead(m.Timestamp)
 
 	if name, args, ok := b.parseCommand(m.Content); ok {
 		b.dispatchCommand(s, m, name, args)
 		return
 	}
 	b.onPlainMessage(s, m)
+}
+
+// recordLastRead advances the stored "last read" timestamp so the next startup
+// only catches up on messages newer than this one. It only moves the timestamp
+// forward, so out-of-order gateway delivery can't rewind it. Failures are
+// logged and swallowed — bookkeeping must never disrupt message handling.
+func (b *Bot) recordLastRead(ts time.Time) {
+	if ts.IsZero() {
+		return
+	}
+	last, ok, err := b.db.GetLastReadTimestamp()
+	if err != nil {
+		slog.Error("get last read timestamp", "err", err)
+		return
+	}
+	if ok && !ts.After(last) {
+		return
+	}
+	if err := b.db.SetLastReadTimestamp(ts); err != nil {
+		slog.Error("set last read timestamp", "err", err)
+	}
 }
 
 // upsertAuthor caches the message author's name and (guild) nickname. Runs on

@@ -83,12 +83,24 @@ func (d *DB) createSchema() error {
 		author_nickname TEXT,
 		author_name TEXT
 	)`
+	// botstate is a small key/value table for runtime bookkeeping. It has no
+	// Python counterpart; it backs the "catch up" feature (see GetBotState /
+	// SetBotState), which stores a single last-read timestamp rather than a row
+	// per message.
+	const createBotState = `
+	CREATE TABLE IF NOT EXISTS botstate (
+		key TEXT PRIMARY KEY,
+		value TEXT
+	)`
 
 	if _, err := d.sql.Exec(createMessages); err != nil {
 		return fmt.Errorf("db: create messages table: %w", err)
 	}
 	if _, err := d.sql.Exec(createUsers); err != nil {
 		return fmt.Errorf("db: create discordusers table: %w", err)
+	}
+	if _, err := d.sql.Exec(createBotState); err != nil {
+		return fmt.Errorf("db: create botstate table: %w", err)
 	}
 	return nil
 }

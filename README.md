@@ -26,6 +26,13 @@ This is the Go port of the original Python (discord.py) bot; behavior is preserv
   cache (reusing the already-annotated image, no second inference call). On a
   cache miss — e.g. after a restart or once 8 newer posts have evicted it — it
   falls back to a fresh inference run at the relaxed confidence.
+- **Catch up on startup** — the bot records the timestamp of the last message it
+  processed. After (re)connecting it scans the most recent `CATCH_UP_LIMIT`
+  messages in each bread channel and replays any posted after that timestamp
+  through the normal pipeline, so images posted while it was offline still get a
+  verdict. It only stores a single timestamp (not every message), and skips
+  entirely on a fresh DB with no stored timestamp so it never replays full
+  history.
 - **Commands**
   - `$help` — list the available commands.
   - `$hello` — sanity check.
@@ -47,6 +54,7 @@ is required; everything else has a default.
 | `DISCORD_BREAD_ROLE` | `[]` | role ids, `[1,2,3]` format |
 | `BREAD_DETECTION_CONFIDENCE` | `0.5` | min "bread" confidence to count as bread (and gate label mentions) |
 | `OVERRIDE_DETECTION_CONFIDENCE` | `0.05` | relaxed threshold used on an "are you sure" retry |
+| `CATCH_UP_LIMIT` | `50` | on startup, messages per bread channel to scan for ones missed while offline (`0` disables) |
 | `DB_DATA_PATH` | `dbdata/messages.db` | SQLite file (reused from the Python bot) |
 | `DOWNLOADS_PATH` | `downloads/` | attachments, plots, annotated images |
 | `INFERENCE_SERVICE_URL` | `http://localhost:8000` | microservice base URL |

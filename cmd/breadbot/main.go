@@ -85,6 +85,10 @@ func run() error {
 	}
 	slog.Info("breadbot started; press Ctrl+C to stop")
 
+	// Catch up on messages missed while offline. Runs in the background so it
+	// never delays shutdown; it reuses the normal message pipeline.
+	go discordBot.CatchUp()
+
 	// Block until interrupted.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

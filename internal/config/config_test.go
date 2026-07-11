@@ -76,6 +76,19 @@ func TestLoadDefaults(t *testing.T) {
 	if !reflect.DeepEqual(c.DiscordBreadRole, []int64{9}) {
 		t.Errorf("DiscordBreadRole = %v, want [9]", c.DiscordBreadRole)
 	}
+	if c.CatchUpLimit != 50 {
+		t.Errorf("CatchUpLimit = %d, want 50", c.CatchUpLimit)
+	}
+}
+
+func TestEnvInt(t *testing.T) {
+	cases := map[string]int{"": 7, "10": 10, "0": 0, "notnum": 7}
+	for in, want := range cases {
+		t.Setenv("CATCH_UP_LIMIT", in)
+		if got := envInt("CATCH_UP_LIMIT", 7); got != want {
+			t.Errorf("envInt(CATCH_UP_LIMIT=%q) = %d, want %d", in, got, want)
+		}
+	}
 }
 
 func TestEnvBool(t *testing.T) {

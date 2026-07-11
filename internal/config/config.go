@@ -24,6 +24,11 @@ type Config struct {
 	DiscordBreadChannels []int64
 	DiscordBreadRole     []int64
 
+	// CatchUpLimit is how many recent messages per bread channel to fetch on
+	// startup when catching up on messages missed while offline. 0 disables
+	// catch-up.
+	CatchUpLimit int
+
 	DBDataPath    string
 	DownloadsPath string
 
@@ -43,6 +48,7 @@ func Load() (*Config, error) {
 		Debug:                       envBool("DEBUG", false),
 		BreadDetectionConfidence:    envFloat("BREAD_DETECTION_CONFIDENCE", 0.5),
 		OverrideDetectionConfidence: envFloat("OVERRIDE_DETECTION_CONFIDENCE", 0.05),
+		CatchUpLimit:                envInt("CATCH_UP_LIMIT", 50),
 		DiscordToken:                os.Getenv("DISCORD_TOKEN"),
 		DBDataPath:                  envStr("DB_DATA_PATH", "dbdata/messages.db"),
 		DownloadsPath:               envStr("DOWNLOADS_PATH", "downloads/"),
@@ -111,6 +117,18 @@ func envBool(key string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+func envInt(key string, def int) int {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func envFloat(key string, def float64) float64 {

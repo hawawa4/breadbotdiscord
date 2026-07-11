@@ -21,10 +21,10 @@ This is the Go port of the original Python (discord.py) bot; behavior is preserv
   mentioned. The result is attributed to the original post.
 - **Prediction cache** — the inference service does its best single-pass
   detection and returns everything, so re-running it yields the same result.
-  The bot therefore keeps the last 32 full predictions in an in-memory LRU keyed
+  The bot therefore keeps the last 8 full predictions in an in-memory LRU keyed
   by the original message. An "are you sure" retry re-renders straight from this
   cache (reusing the already-annotated image, no second inference call). On a
-  cache miss — e.g. after a restart or once 32 newer posts have evicted it — it
+  cache miss — e.g. after a restart or once 8 newer posts have evicted it — it
   falls back to a fresh inference run at the relaxed confidence.
 - **Commands**
   - `$help` — list the available commands.

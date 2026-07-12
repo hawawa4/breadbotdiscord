@@ -28,10 +28,14 @@ type Message struct {
 	// ImageFilename is the basename of the annotated prediction PNG saved under
 	// downloads/predictions/, or invalid if none was produced/persisted.
 	ImageFilename sql.NullString
+	// CreatedAt is the original message's creation time in unix milliseconds, or
+	// invalid for rows written before the timestamp was stored and not yet
+	// backfilled (see BackfillTimestamps).
+	CreatedAt sql.NullInt64
 }
 
 // messageColumns is the fixed column order used by every SELECT and by scanRow.
-const messageColumns = "ogmessage_id,attachment_id,replymessage_jump_url,replymessage_id,author_id,channel_id,guild_id,roundness,labels_json,image_filename"
+const messageColumns = "ogmessage_id,attachment_id,replymessage_jump_url,replymessage_id,author_id,channel_id,guild_id,roundness,labels_json,image_filename,created_at"
 
 // selectMessages is the base SELECT for the messages table.
 const selectMessages = "SELECT " + messageColumns + " FROM messages"
@@ -59,6 +63,7 @@ func scanMessage(s interface{ Scan(...any) error }) (Message, error) {
 		&m.Roundness,
 		&labelsJSON,
 		&m.ImageFilename,
+		&m.CreatedAt,
 	); err != nil {
 		return Message{}, err
 	}

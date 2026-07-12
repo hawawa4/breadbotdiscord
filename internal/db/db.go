@@ -85,6 +85,7 @@ func (d *DB) createSchema() error {
 		roundness REAL,
 		labels_json TEXT,
 		image_filename TEXT,
+		created_at INTEGER,
 		PRIMARY KEY (ogmessage_id, attachment_id)
 	)`
 	const createUsers = `
@@ -127,9 +128,11 @@ func (d *DB) createSchema() error {
 //     old rows simply have no linked gallery image).
 //   - Pre-multi-image: keyed by ogmessage_id alone, no attachment_id. The table
 //     is rebuilt with the composite PK and existing rows get attachment_id 0.
+//   - Pre-timestamp: no created_at column. Added idempotently (nullable); old
+//     rows have no stored timestamp until the startup backfill fills them in.
 //
-// A freshly created table (from createSchema's CREATE) already has both, so
-// both checks no-op.
+// A freshly created table (from createSchema's CREATE) already has all, so the
+// checks no-op.
 func (d *DB) migrateMessagesSchema() error {
 	cols, err := d.tableColumns("messages")
 	if err != nil {
@@ -138,6 +141,12 @@ func (d *DB) migrateMessagesSchema() error {
 
 	if !cols["image_filename"] {
 		if err := d.ensureColumn("messages", "image_filename", "TEXT"); err != nil {
+			return err
+		}
+	}
+
+	if !cols["created_at"] {
+		if err := d.ensureColumn("messages", "created_at", "INTEGER"); err != nil {
 			return err
 		}
 	}
@@ -173,14 +182,15 @@ func (d *DB) rebuildMessagesWithAttachmentID() error {
 			roundness REAL,
 			labels_json TEXT,
 			image_filename TEXT,
+			created_at INTEGER,
 			PRIMARY KEY (ogmessage_id, attachment_id)
 		)`,
 		`INSERT INTO messages_new
 			(ogmessage_id, attachment_id, replymessage_jump_url, replymessage_id,
-			 author_id, channel_id, guild_id, roundness, labels_json, image_filename)
+			 author_id, channel_id, guild_id, roundness, labels_json, image_filename, created_at)
 		 SELECT
 			ogmessage_id, 0, replymessage_jump_url, replymessage_id,
-			author_id, channel_id, guild_id, roundness, labels_json, image_filename
+			author_id, channel_id, guild_id, roundness, labels_json, image_filename, created_at
 		 FROM messages`,
 		`DROP TABLE messages`,
 		`ALTER TABLE messages_new RENAME TO messages`,

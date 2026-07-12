@@ -57,7 +57,10 @@ Package layout (`internal/`):
   attachment, since a message can carry several images each scored independently. A legacy
   single-key DB is rebuilt in place with old rows getting `attachment_id 0`. An `image_filename`
   column links a row to its annotated PNG under `downloads/predictions/` (for the frontend gallery).
-  `ErrUserNotFound` mirrors the Python exception.
+  A `created_at` column (unix ms, the original message's timestamp) backs the frontend chart's real
+  time axis; it's written inline by the live pipeline and filled for older rows by a startup
+  backfill job (`bot.BackfillTimestamps`, mirroring `CatchUp` — REST-fetches each message missing a
+  timestamp and stores it, best-effort). `ErrUserNotFound` mirrors the Python exception.
 - **`inference/`** — HTTP client for the microservice. POSTs base64 image bytes to
   `{base}/predict/predict` (the doubled segment is intentional, matching the Python client).
 - **`bot/`** — the discordgo session, event routing, bread pipeline, and commands.

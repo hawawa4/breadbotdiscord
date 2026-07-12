@@ -190,7 +190,7 @@ func TestZeroRoundnessExcluded(t *testing.T) {
 	if err := d.UpsertMessageStats(zeroOgID, 0, 0, map[string]float64{"bread": 0.9}, ""); err != nil {
 		t.Fatalf("UpsertMessageStats(0): %v", err)
 	}
-	if err := d.UpsertMessageDiscordInfo(zeroOgID, 0, "url", 1, userWithHistory, 1, 1); err != nil {
+	if err := d.UpsertMessageDiscordInfo(zeroOgID, 0, "url", 1, userWithHistory, 1, 1, 1700000000000); err != nil {
 		t.Fatalf("UpsertMessageDiscordInfo: %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestMultiImageMessage(t *testing.T) {
 		if err := d.UpsertMessageStats(msgID, sp.attID, sp.roundness, map[string]float64{"bread": 0.8}, sp.image); err != nil {
 			t.Fatalf("UpsertMessageStats(att %d): %v", sp.attID, err)
 		}
-		if err := d.UpsertMessageDiscordInfo(msgID, sp.attID, "url", 1, 42, 1, 1); err != nil {
+		if err := d.UpsertMessageDiscordInfo(msgID, sp.attID, "url", 1, 42, 1, 1, 1700000000000); err != nil {
 			t.Fatalf("UpsertMessageDiscordInfo(att %d): %v", sp.attID, err)
 		}
 	}
@@ -345,5 +345,90 @@ func TestUserRoundTrip(t *testing.T) {
 	}
 	if got.AuthorName != "loaf" || got.AuthorNickname.String != "Loafy" {
 		t.Errorf("got %+v, want name=loaf nick=Loafy", got)
+	}
+}
+
+func TestCreatedAtRoundTrip(t *testing.T) {
+	d := openTestDB(t)
+	const (
+		ogID    = int64(1234567890123456789)
+		chanID  = int64(555)
+		created = int64(1720000000000)
+	)
+	if err := d.UpsertMessageStats(ogID, 0, 0.5, map[string]float64{"bread": 0.9}, ""); err != nil {
+		t.Fatalf("UpsertMessageStats: %v", err)
+	}
+	if err := d.UpsertMessageDiscordInfo(ogID, 0, "url", 1, 42, chanID, 1, created); err != nil {
+		t.Fatalf("UpsertMessageDiscordInfo: %v", err)
+	}
+
+	msgs, err := d.GetMessage(ogID)
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if !msgs[0].CreatedAt.Valid || msgs[0].CreatedAt.Int64 != created {
+		t.Errorf("CreatedAt = %+v, want valid %d", msgs[0].CreatedAt, created)
+	}
+}
+
+func TestBackfillCreatedAtHelpers(t *testing.T) {
+	d := openTestDB(t)
+
+	// Fixture rows (migrated in) have a NULL created_at, so they are the
+	// backfill's targets. A fresh row we write with a channel should be listed.
+	const (
+		ogID   = int64(987654321098765432)
+		chanID = int64(777)
+	)
+	if err := d.UpsertMessageStats(ogID, 0, 0.5, map[string]float64{"bread": 0.9}, ""); err != nil {
+		t.Fatalf("UpsertMessageStats: %v", err)
+	}
+	// Write discord info with created_at 0 → still a valid stored value, but we
+	// then null it to simulate a pre-timestamp row for this test.
+	if err := d.UpsertMessageDiscordInfo(ogID, 0, "url", 1, 42, chanID, 1, 0); err != nil {
+		t.Fatalf("UpsertMessageDiscordInfo: %v", err)
+	}
+	if _, err := d.sql.Exec(`UPDATE messages SET created_at = NULL WHERE ogmessage_id = ?`, ogID); err != nil {
+		t.Fatalf("null created_at: %v", err)
+	}
+
+	missing, err := d.MessagesMissingCreatedAt()
+	if err != nil {
+		t.Fatalf("MessagesMissingCreatedAt: %v", err)
+	}
+	var found *MissingTimestamp
+	for i := range missing {
+		if missing[i].OgMessageID == ogID {
+			found = &missing[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("ogID %d not reported as missing", ogID)
+	}
+	if found.ChannelID != chanID {
+		t.Errorf("missing ChannelID = %d, want %d", found.ChannelID, chanID)
+	}
+
+	const filled = int64(1720000000000)
+	if err := d.SetMessageCreatedAt(ogID, filled); err != nil {
+		t.Fatalf("SetMessageCreatedAt: %v", err)
+	}
+	msgs, err := d.GetMessage(ogID)
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if !msgs[0].CreatedAt.Valid || msgs[0].CreatedAt.Int64 != filled {
+		t.Errorf("after backfill CreatedAt = %+v, want %d", msgs[0].CreatedAt, filled)
+	}
+
+	// After filling, it must no longer be reported as missing.
+	missing2, err := d.MessagesMissingCreatedAt()
+	if err != nil {
+		t.Fatalf("MessagesMissingCreatedAt (2): %v", err)
+	}
+	for _, m := range missing2 {
+		if m.OgMessageID == ogID {
+			t.Errorf("ogID %d still reported missing after backfill", ogID)
+		}
 	}
 }

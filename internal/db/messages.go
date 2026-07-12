@@ -33,19 +33,71 @@ func (d *DB) UpsertMessageStats(ogMessageID, attachmentID int64, roundness float
 
 // UpsertMessageDiscordInfo inserts or updates the discord metadata for a single
 // image attachment of a message, keyed on the composite (ogmessage_id,
-// attachment_id). Mirrors upsert_message_discordinfo.
-func (d *DB) UpsertMessageDiscordInfo(ogMessageID, attachmentID int64, replyJumpURL string, replyMessageID, authorID, channelID, guildID int64) error {
+// attachment_id). createdAtMs is the original message's creation time in unix
+// milliseconds, stored so the frontend chart can render a real time axis
+// without a live Discord fetch. Mirrors upsert_message_discordinfo.
+func (d *DB) UpsertMessageDiscordInfo(ogMessageID, attachmentID int64, replyJumpURL string, replyMessageID, authorID, channelID, guildID, createdAtMs int64) error {
 	const q = `
-	INSERT INTO messages (ogmessage_id, attachment_id, replymessage_jump_url, replymessage_id, author_id, channel_id, guild_id)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO messages (ogmessage_id, attachment_id, replymessage_jump_url, replymessage_id, author_id, channel_id, guild_id, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(ogmessage_id, attachment_id) DO UPDATE SET
 		replymessage_jump_url=excluded.replymessage_jump_url,
 		replymessage_id=excluded.replymessage_id,
 		author_id=excluded.author_id,
 		channel_id=excluded.channel_id,
-		guild_id=excluded.guild_id`
-	if _, err := d.sql.Exec(q, ogMessageID, attachmentID, replyJumpURL, replyMessageID, authorID, channelID, guildID); err != nil {
+		guild_id=excluded.guild_id,
+		created_at=excluded.created_at`
+	if _, err := d.sql.Exec(q, ogMessageID, attachmentID, replyJumpURL, replyMessageID, authorID, channelID, guildID, createdAtMs); err != nil {
 		return fmt.Errorf("db: upsert message discord info: %w", err)
+	}
+	return nil
+}
+
+// MissingTimestamp identifies a message whose created_at is not yet stored,
+// along with the channel needed to re-fetch it over REST.
+type MissingTimestamp struct {
+	OgMessageID int64
+	ChannelID   int64
+}
+
+// MessagesMissingCreatedAt returns the distinct messages that have no stored
+// created_at (one entry per ogmessage_id, since all attachments of a message
+// share a timestamp). Rows with a null/zero channel_id are excluded — without a
+// channel the message can't be re-fetched. Used by the startup backfill.
+func (d *DB) MessagesMissingCreatedAt() ([]MissingTimestamp, error) {
+	const q = `
+	SELECT ogmessage_id, channel_id
+	FROM messages
+	WHERE created_at IS NULL
+	AND channel_id IS NOT NULL
+	AND channel_id != 0
+	GROUP BY ogmessage_id`
+	rows, err := d.sql.Query(q)
+	if err != nil {
+		return nil, fmt.Errorf("db: messages missing created_at: %w", err)
+	}
+	defer rows.Close()
+
+	var result []MissingTimestamp
+	for rows.Next() {
+		var m MissingTimestamp
+		if err := rows.Scan(&m.OgMessageID, &m.ChannelID); err != nil {
+			return nil, fmt.Errorf("db: scan missing-timestamp row: %w", err)
+		}
+		result = append(result, m)
+	}
+	return result, rows.Err()
+}
+
+// SetMessageCreatedAt sets created_at (unix ms) for every attachment row of a
+// message. Used by the startup backfill to fill in rows written before the
+// timestamp was stored.
+func (d *DB) SetMessageCreatedAt(ogMessageID, createdAtMs int64) error {
+	if _, err := d.sql.Exec(
+		`UPDATE messages SET created_at = ? WHERE ogmessage_id = ?`,
+		createdAtMs, ogMessageID,
+	); err != nil {
+		return fmt.Errorf("db: set message created_at: %w", err)
 	}
 	return nil
 }

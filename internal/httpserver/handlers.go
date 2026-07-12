@@ -28,6 +28,10 @@ type messageDTO struct {
 	// none was produced/persisted for this message. The client builds the URL as
 	// <base>/api/images/predictions/<AnnotatedImage>.
 	AnnotatedImage *string `json:"annotated_image"`
+	// CreatedAtMs is the original message's creation time in unix milliseconds,
+	// or null for rows written before the timestamp was stored and not yet
+	// backfilled. Lets the frontend render a real time axis without a live fetch.
+	CreatedAtMs *int64 `json:"created_at_ms"`
 }
 
 func toMessageDTO(m db.Message) messageDTO {
@@ -48,6 +52,10 @@ func toMessageDTO(m db.Message) messageDTO {
 	if m.ImageFilename.Valid && m.ImageFilename.String != "" {
 		f := m.ImageFilename.String
 		dto.AnnotatedImage = &f
+	}
+	if m.CreatedAt.Valid {
+		c := m.CreatedAt.Int64
+		dto.CreatedAtMs = &c
 	}
 	return dto
 }
@@ -188,6 +196,7 @@ func (s *Server) handleUserRoundness(w http.ResponseWriter, r *http.Request) {
 			"channel_id":            strconv.FormatInt(dto.ChannelID, 10),
 			"replymessage_jump_url": dto.ReplyMessageJumpURL,
 			"annotated_image":       dto.AnnotatedImage,
+			"created_at_ms":         dto.CreatedAtMs,
 		}
 	}
 	resp["history"] = points

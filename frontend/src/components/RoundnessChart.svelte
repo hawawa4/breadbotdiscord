@@ -26,7 +26,14 @@
 
     // Plot oldest → newest so the line reads left-to-right over time.
     ordered = [...history].sort((a, b) => b.index - a.index)
-    const xs = ordered.map((_, i) => i + 1)
+
+    // Use real timestamps for the x-axis when every point has one (created_at_ms
+    // is unix ms; uPlot's time scale wants seconds). Fall back to a synthetic
+    // 1..n index for older rows not yet backfilled with a timestamp.
+    const haveTime = ordered.length > 0 && ordered.every((p) => p.created_at_ms != null)
+    const xs = haveTime
+      ? ordered.map((p) => Number(p.created_at_ms) / 1000)
+      : ordered.map((_, i) => i + 1)
     const ys = ordered.map((p) => p.roundness * 100)
 
     const accent = cssVar('--accent-2', '#008080')
@@ -46,7 +53,9 @@
           // highlighted cursor point sits exactly on a plotted point.
           dataIdx: (u, seriesIdx, hoveredIdx) => hoveredIdx,
         },
-        scales: { y: { range: [0, 100] } },
+        // x is a real time scale only when we have timestamps; otherwise it's a
+        // plain numeric index (time: false) so uPlot doesn't format 1..n as dates.
+        scales: { x: { time: haveTime }, y: { range: [0, 100] } },
         hooks: {
           // Only register hover/click when the pointer is actually near a
           // plotted point (within HIT_RADIUS px), not anywhere on the plot.
@@ -87,7 +96,13 @@
           },
         ],
         series: [
-          { label: 'n' },
+          // x series: a date (time-based) or the synthetic sample index.
+          haveTime
+            ? {
+                label: 'date',
+                value: (u, v) => (v == null ? '—' : new Date(v * 1000).toLocaleDateString()),
+              }
+            : { label: 'n' },
           {
             label: 'roundness',
             stroke: accent,

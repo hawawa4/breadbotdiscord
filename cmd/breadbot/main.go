@@ -89,6 +89,13 @@ func run() error {
 	// never delays shutdown; it reuses the normal message pipeline.
 	go discordBot.CatchUp()
 
+	// Backfill created_at for messages stored before the timestamp was tracked,
+	// so the frontend chart can render a real time axis. Best-effort, in the
+	// background; each startup retries any it couldn't fetch.
+	// This only exists because I was an idiot when this was a silly 2 hour project
+	// And didn't save the timestamps already
+	go discordBot.BackfillTimestamps()
+
 	// Block until interrupted.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

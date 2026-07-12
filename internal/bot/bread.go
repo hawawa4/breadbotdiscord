@@ -266,6 +266,7 @@ func (b *Bot) deliverBreadMessage(s *discordgo.Session, target *discordgo.Messag
 		mustParseID(target.Author.ID),
 		mustParseID(target.ChannelID),
 		mustParseID(target.GuildID),
+		target.Timestamp.UnixMilli(),
 	); err != nil {
 		return fmt.Errorf("persist discord info: %w", err)
 	}

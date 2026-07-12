@@ -1,28 +1,28 @@
 <script>
-  import { route, href } from './lib/router.js'
-  import Dashboard from './pages/Dashboard.svelte'
-  import Leaderboard from './pages/Leaderboard.svelte'
-  import Users from './pages/Users.svelte'
-  import User from './pages/User.svelte'
-  import Gallery from './pages/Gallery.svelte'
+  import { route, href } from "./lib/router.js";
+  import Dashboard from "./pages/Dashboard.svelte";
+  import Leaderboard from "./pages/Leaderboard.svelte";
+  import Users from "./pages/Users.svelte";
+  import User from "./pages/User.svelte";
+  import Gallery from "./pages/Gallery.svelte";
 
   const nav = [
-    { path: '/', label: 'Dashboard', match: 'dashboard' },
-    { path: '/leaderboard', label: 'Leaderboard', match: 'leaderboard' },
-    { path: '/users', label: 'Users', match: 'users' },
-    { path: '/gallery', label: 'Gallery', match: 'gallery' },
-  ]
+    { path: "/", label: "Dashboard", match: "dashboard" },
+    { path: "/leaderboard", label: "Leaderboard", match: "leaderboard" },
+    { path: "/users", label: "Users", match: "users" },
+    // { path: '/gallery', label: 'Gallery', match: 'gallery' },
+  ];
 </script>
 
 <header class="topbar">
   <div class="container bar">
-    <a class="brand" href={href('/')}>🍞 BreadBot</a>
+    <a class="brand" href={href("/")}>🍞 BreadBot</a>
     <nav>
       {#each nav as item}
         <a
           href={href(item.path)}
           class:active={$route.name === item.match ||
-            (item.match === 'users' && $route.name === 'user')}>{item.label}</a
+            (item.match === "users" && $route.name === "user")}>{item.label}</a
         >
       {/each}
     </nav>
@@ -30,16 +30,16 @@
 </header>
 
 <main class="container">
-  {#if $route.name === 'dashboard'}
+  {#if $route.name === "dashboard"}
     <Dashboard />
-  {:else if $route.name === 'leaderboard'}
+  {:else if $route.name === "leaderboard"}
     <Leaderboard />
-  {:else if $route.name === 'users'}
+  {:else if $route.name === "users"}
     <Users />
-  {:else if $route.name === 'user'}
+  {:else if $route.name === "user"}
     <User id={$route.params.id} />
-  {:else if $route.name === 'gallery'}
-    <Gallery />
+    <!-- {:else if $route.name === "gallery"}
+    <Gallery /> -->
   {/if}
 </main>
 

@@ -88,12 +88,34 @@ Tests are self-contained: DB tests run against a temp copy of the committed
 
 ## Build
 
+The web UI is a Svelte SPA embedded into the binary via `go:embed`, so it must
+be built **before** the Go binary. The `Justfile` wires this up — `just build`,
+`just image`, and `just publish` all rebuild the frontend first:
+
 ```sh
-CGO_ENABLED=0 go build -o breadbot ./cmd/breadbot
+just build        # builds frontend/ then the static Go binary → ./breadbot
 ```
 
-The pure-Go SQLite driver (`modernc.org/sqlite`) means no CGO and a fully static
+To do it by hand:
+
+```sh
+cd frontend && npm ci && npm run build    # → internal/httpserver/frontend/dist
+cd .. && CGO_ENABLED=0 go build -o breadbot ./cmd/breadbot
+```
+
+A placeholder `dist/index.html` is committed so `go build`/`go test` work on a
+clean checkout without Node; run the frontend build to get the real UI. The
+pure-Go SQLite driver (`modernc.org/sqlite`) means no CGO and a fully static
 binary.
+
+### Frontend dev server
+
+For live-reload development, run the Vite dev server (it proxies `/api` and
+`/healthz` to a bot running on `:8080`, and `DEBUG=true` enables permissive CORS):
+
+```sh
+cd frontend && npm run dev        # http://localhost:5173
+```
 
 ## Container image (ko)
 
@@ -107,6 +129,13 @@ go install github.com/google/ko@latest        # if not installed
 export KO_DOCKER_REPO=ghcr.io/hawawa4/breadbotdiscord
 ko build ./cmd/breadbot                        # build + push to $KO_DOCKER_REPO
 ko build --local ./cmd/breadbot                # or build into the local docker daemon
+```
+
+Build the frontend first (`just image`/`just publish` do this for you), or the
+image ships the placeholder UI:
+
+```sh
+cd frontend && npm ci && npm run build && cd ..
 ```
 
 The **SQLite DB is not baked into the image** — it is mutable runtime state, so

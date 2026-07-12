@@ -225,8 +225,10 @@ dbdata/
 
 # Frontend (Svelte SPA)
 frontend/node_modules/
-# The compiled SPA is embedded into the Go binary via go:embed, so it MUST be
-# tracked despite the global dist/ ignore above. Force-include it (and its
-# committed placeholder index.html) back in.
+# go:embed needs *something* at internal/httpserver/frontend/dist so a clean
+# checkout compiles without running the frontend build. We track only a
+# placeholder index.html for that; the real hashed build artifacts (assets/*)
+# stay ignored — `just build`/`just image` regenerate them before shipping.
 !internal/httpserver/frontend/dist/
-!internal/httpserver/frontend/dist/**
+internal/httpserver/frontend/dist/*
+!internal/httpserver/frontend/dist/index.html

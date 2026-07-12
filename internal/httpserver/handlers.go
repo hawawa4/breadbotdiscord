@@ -110,11 +110,41 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]messageDTO, len(rows))
+	// Resolve author names in one batch query so each row can show the baker's
+	// name instead of a bare snowflake id (falls back to the id when a user has
+	// no cached discordusers row).
+	ids := make([]int64, len(rows))
 	for i, m := range rows {
-		out[i] = toMessageDTO(m)
+		ids[i] = m.AuthorID
+	}
+	users, err := s.db.SelectUsersByIDs(ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	out := make([]leaderboardDTO, len(rows))
+	for i, m := range rows {
+		dto := leaderboardDTO{messageDTO: toMessageDTO(m)}
+		if u, ok := users[m.AuthorID]; ok {
+			dto.AuthorName = u.AuthorName
+			if u.AuthorNickname.Valid {
+				n := u.AuthorNickname.String
+				dto.AuthorNickname = &n
+			}
+		}
+		out[i] = dto
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"order": order, "n": n, "rows": out})
+}
+
+// leaderboardDTO is a message row plus the author's cached name, so the client
+// can render the baker's name instead of the raw id. Name fields are empty/null
+// when the author has no cached discordusers row.
+type leaderboardDTO struct {
+	messageDTO
+	AuthorName     string  `json:"author_name"`
+	AuthorNickname *string `json:"author_nickname"`
 }
 
 // handleUserRoundness returns a user's min/max roundness + last-50 history.
@@ -206,6 +236,47 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ogmessage_id": strconv.FormatInt(id, 10),
 		"rows":         rows,
+	})
+}
+
+// handleMessagePreview fetches a message straight from Discord (via the bot's
+// REST session) and returns a minimal preview the UI renders as a faked message
+// card with images inline. The channel id is required as a query param
+// (?channel_id=...) — the client already has it from the message/leaderboard
+// row, so we fetch directly without a DB lookup. Requires a live bot session.
+func (s *Server) handleMessagePreview(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "ogmessage_id")
+	if !ok {
+		return
+	}
+	channelID := r.URL.Query().Get("channel_id")
+	if channelID == "" {
+		writeError(w, http.StatusBadRequest, "channel_id query param required")
+		return
+	}
+	if _, err := strconv.ParseInt(channelID, 10, 64); err != nil {
+		writeError(w, http.StatusBadRequest, "channel_id must be a snowflake")
+		return
+	}
+	if s.bot == nil || !s.bot.Ready() {
+		writeError(w, http.StatusServiceUnavailable, "discord session not ready")
+		return
+	}
+
+	preview, err := s.bot.FetchMessagePreview(channelID, strconv.FormatInt(id, 10))
+	if err != nil {
+		// The message may have been deleted, or the bot may lack access.
+		writeError(w, http.StatusNotFound, "message not available")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message_id":    preview.MessageID,
+		"channel_id":    preview.ChannelID,
+		"author_name":   preview.AuthorName,
+		"author_avatar": preview.AuthorAvatar,
+		"content":       preview.Content,
+		"timestamp_ms":  preview.TimestampMs,
+		"image_urls":    preview.ImageURLs,
 	})
 }
 

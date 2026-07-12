@@ -2,8 +2,10 @@
   import { api, imageURL } from '../lib/api.js'
   import { pct, displayName } from '../lib/format.js'
   import RoundnessChart from '../components/RoundnessChart.svelte'
+  import MessagePreview from '../components/MessagePreview.svelte'
 
   let { id } = $props()
+  let previewMsg = $state(null) // message DTO open in the preview modal
 
   let user = $state(null)
   let roundness = $state(null)
@@ -70,8 +72,10 @@
         {:else}
           <p class="muted">No scored breads yet.</p>
         {/if}
-        {#if m && m.replymessage_jump_url}
-          <a href={m.replymessage_jump_url} target="_blank" rel="noreferrer">jump to message ↗</a>
+        {#if m}
+          <div class="controls" style="gap:0.75rem">
+            <button class="link" onclick={() => (previewMsg = m)}>preview message</button>
+          </div>
         {/if}
       </div>
     {/each}
@@ -85,6 +89,15 @@
       <RoundnessChart {history} />
     {/if}
   </div>
+{/if}
+
+{#if previewMsg}
+  <MessagePreview
+    messageId={previewMsg.replymessage_id}
+    channelId={previewMsg.channel_id}
+    jumpUrl={previewMsg.replymessage_jump_url}
+    onClose={() => (previewMsg = null)}
+  />
 {/if}
 
 <style>

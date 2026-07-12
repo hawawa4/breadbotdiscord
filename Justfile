@@ -14,7 +14,7 @@ help:
     @just --list
 
 # Run the bot locally (reads .env). Requires a reachable inference service.
-run:
+run: frontend
     go run ./cmd/breadbot
 
 # Run tests.

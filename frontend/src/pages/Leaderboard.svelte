@@ -1,13 +1,16 @@
 <script>
   import { api, imageURL } from '../lib/api.js'
   import { href } from '../lib/router.js'
+  import { displayName } from '../lib/format.js'
   import RoundnessCell from '../components/RoundnessCell.svelte'
+  import MessagePreview from '../components/MessagePreview.svelte'
 
   let order = $state('max')
   let n = $state(10)
   let rows = $state([])
   let error = $state(null)
   let loading = $state(true)
+  let previewRow = $state(null) // row whose message is open in the preview modal
 
   async function load() {
     loading = true
@@ -71,12 +74,10 @@
                 <span class="muted">—</span>
               {/if}
             </td>
-            <td><a href={href(`/users/${row.author_id}`)}>baker {row.author_id}</a></td>
+            <td><a href={href(`/users/${row.author_id}`)}>{displayName(row)}</a></td>
             <td class="num"><RoundnessCell value={row.roundness} /></td>
-            <td class="num">
-              {#if row.replymessage_jump_url}
-                <a href={row.replymessage_jump_url} target="_blank" rel="noreferrer">jump ↗</a>
-              {/if}
+            <td class="num actions">
+              <button class="link" onclick={() => (previewRow = row)}>preview</button>
             </td>
           </tr>
         {/each}
@@ -85,7 +86,22 @@
   </div>
 {/if}
 
+{#if previewRow}
+  <MessagePreview
+    messageId={previewRow.replymessage_id}
+    channelId={previewRow.channel_id}
+    jumpUrl={previewRow.replymessage_jump_url}
+    onClose={() => (previewRow = null)}
+  />
+{/if}
+
 <style>
+  .actions {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    justify-content: flex-end;
+  }
   .mini {
     width: 48px;
     height: 48px;

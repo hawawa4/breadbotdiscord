@@ -1,7 +1,8 @@
 <script>
   import { api, imageURL } from '../lib/api.js'
   import { href } from '../lib/router.js'
-  import { pct } from '../lib/format.js'
+  import { pct, displayName } from '../lib/format.js'
+  import MessagePreview from '../components/MessagePreview.svelte'
 
   // The gallery draws from the leaderboard rows (which carry annotated_image,
   // author, and roundness) — there is no dedicated "all images" endpoint, and
@@ -10,6 +11,7 @@
   let error = $state(null)
   let loading = $state(true)
   let selected = $state(null) // index into items, or null
+  let previewItem = $state(null) // item open in the message preview modal
 
   async function load() {
     loading = true
@@ -38,6 +40,9 @@
   }
 
   function onKey(e) {
+    // While the message preview is open it owns the keyboard (its own Escape
+    // handler closes it); don't also navigate/close the lightbox underneath.
+    if (previewItem != null) return
     if (selected == null) return
     if (e.key === 'Escape') close()
     else if (e.key === 'ArrowRight') step(1)
@@ -80,14 +85,21 @@
       <img src={imageURL('predictions', item.annotated_image)} alt="bread" />
       <div class="meta">
         <span class="round">{pct(item.roundness)} round</span>
-        <a href={href(`/users/${item.author_id}`)} onclick={close}>baker {item.author_id}</a>
-        {#if item.replymessage_jump_url}
-          <a href={item.replymessage_jump_url} target="_blank" rel="noreferrer">jump ↗</a>
-        {/if}
+        <a href={href(`/users/${item.author_id}`)} onclick={close}>{displayName(item)}</a>
+        <button class="link light" onclick={() => (previewItem = item)}>preview</button>
       </div>
     </div>
     <button class="nav next" onclick={(e) => { e.stopPropagation(); step(1) }} aria-label="Next">›</button>
   </div>
+{/if}
+
+{#if previewItem}
+  <MessagePreview
+    messageId={previewItem.replymessage_id}
+    channelId={previewItem.channel_id}
+    jumpUrl={previewItem.replymessage_jump_url}
+    onClose={() => (previewItem = null)}
+  />
 {/if}
 
 <style>
@@ -168,7 +180,8 @@
     font-weight: 700;
     color: #fff;
   }
-  .meta a {
+  .meta a,
+  .meta .light {
     color: var(--accent);
   }
   .nav {

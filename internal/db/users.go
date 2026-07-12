@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // UpsertUser inserts or updates a discord user's cached name/nickname, keyed on
@@ -57,6 +58,46 @@ func (d *DB) CountUsers() (int, error) {
 		return 0, fmt.Errorf("db: count users: %w", err)
 	}
 	return n, nil
+}
+
+// SelectUsersByIDs returns cached info for the given author IDs, keyed by
+// author_id. IDs with no cached discordusers row are simply absent from the map
+// (the caller falls back to the bare id). Duplicate ids are de-duplicated. A
+// single query avoids N+1 lookups when enriching a list of messages.
+func (d *DB) SelectUsersByIDs(ids []int64) (map[int64]User, error) {
+	out := make(map[int64]User)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	// De-duplicate while building the placeholder list and args.
+	seen := make(map[int64]struct{}, len(ids))
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+
+	q := "SELECT author_id, author_nickname, author_name FROM discordusers WHERE author_id IN (" +
+		strings.Join(placeholders, ",") + ")"
+	rows, err := d.sql.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("db: select users by ids: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.AuthorID, &u.AuthorNickname, &u.AuthorName); err != nil {
+			return nil, fmt.Errorf("db: scan user row: %w", err)
+		}
+		out[u.AuthorID] = u
+	}
+	return out, rows.Err()
 }
 
 // SelectUser returns cached info for a user, or ErrUserNotFound if absent.

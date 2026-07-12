@@ -194,6 +194,7 @@ numbers, so a browser client doesn't lose precision above 2^53.
 | `GET /api/users/{id}/roundness` | a user's min/max + last-50 history |
 | `GET /api/users/{id}` | cached user info |
 | `GET /api/messages/{ogmessage_id}` | a message's per-image stats (`{ogmessage_id, rows:[...]}`) |
+| `GET /api/messages/{ogmessage_id}/preview?channel_id=` | live message fetched from Discord via the bot (author, text, image URLs) for an inline preview; needs a ready session |
 | `GET /api/images/predictions/{name}` | an annotated prediction PNG from `DOWNLOADS_PATH/predictions/` |
 | `GET /api/images/plots/{name}` | a roundness-history plot PNG from `DOWNLOADS_PATH/plots/` |
 

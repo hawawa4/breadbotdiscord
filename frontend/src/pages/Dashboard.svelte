@@ -1,13 +1,15 @@
 <script>
   import { api } from '../lib/api.js'
   import { href } from '../lib/router.js'
-  import { pct } from '../lib/format.js'
+  import { pct, displayName } from '../lib/format.js'
   import RoundnessCell from '../components/RoundnessCell.svelte'
+  import MessagePreview from '../components/MessagePreview.svelte'
 
   let summary = $state(null)
   let top = $state([])
   let error = $state(null)
   let loading = $state(true)
+  let previewRow = $state(null)
 
   async function load() {
     loading = true
@@ -69,10 +71,8 @@
             <tr>
               <td class="num">{i + 1}</td>
               <td>
-                <a href={href(`/users/${row.author_id}`)}>baker {row.author_id}</a>
-                {#if row.replymessage_jump_url}
-                  · <a href={row.replymessage_jump_url} target="_blank" rel="noreferrer">jump</a>
-                {/if}
+                <a href={href(`/users/${row.author_id}`)}>{displayName(row)}</a>
+                · <button class="link" onclick={() => (previewRow = row)}>preview</button>
               </td>
               <td class="num"><RoundnessCell value={row.roundness} /></td>
             </tr>
@@ -81,4 +81,13 @@
       </table>
     {/if}
   </div>
+{/if}
+
+{#if previewRow}
+  <MessagePreview
+    messageId={previewRow.replymessage_id}
+    channelId={previewRow.channel_id}
+    jumpUrl={previewRow.replymessage_jump_url}
+    onClose={() => (previewRow = null)}
+  />
 {/if}

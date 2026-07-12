@@ -150,6 +150,17 @@ button.active {
   border-color: var(--accent);
   color: #fff;
 }
+/* A button that reads as an inline link (for row actions). */
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+}
+button.link:hover {
+  text-decoration: underline;
+}
 
 /* State messages */
 .state {

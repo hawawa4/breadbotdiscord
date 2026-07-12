@@ -9,12 +9,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hawawa4/breadbotdiscord/internal/bot"
 	"github.com/hawawa4/breadbotdiscord/internal/db"
 )
 
-// BotStatus reports whether the Discord session is connected (for /healthz).
+// BotStatus is the bot surface the HTTP server needs: liveness (for /healthz)
+// and fetching a message over Discord's REST API (for the inline preview).
 type BotStatus interface {
 	Ready() bool
+	FetchMessagePreview(channelID, messageID string) (bot.MessagePreview, error)
 }
 
 // Server holds the dependencies for the read-only API.
@@ -95,6 +98,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/users", s.auth(s.handleUsers))
 	mux.HandleFunc("GET /api/users/{id}/roundness", s.auth(s.handleUserRoundness))
 	mux.HandleFunc("GET /api/users/{id}", s.auth(s.handleUser))
+	mux.HandleFunc("GET /api/messages/{ogmessage_id}/preview", s.auth(s.handleMessagePreview))
 	mux.HandleFunc("GET /api/messages/{ogmessage_id}", s.auth(s.handleMessage))
 	mux.HandleFunc("GET /api/images/predictions/{name}", s.auth(s.handleImage(imageKindPredictions)))
 	mux.HandleFunc("GET /api/images/plots/{name}", s.auth(s.handleImage(imageKindPlots)))

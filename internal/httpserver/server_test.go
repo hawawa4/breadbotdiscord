@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hawawa4/breadbotdiscord/internal/bot"
 	"github.com/hawawa4/breadbotdiscord/internal/db"
 )
 
@@ -20,11 +21,27 @@ const (
 	roundestOgID = int64(1419411009986367640)
 )
 
-type fakeBot struct{ ready bool }
+type fakeBot struct {
+	ready       bool
+	preview     bot.MessagePreview
+	previewErr  error
+	lastChannel string
+	lastMessage string
+}
 
-func (f fakeBot) Ready() bool { return f.ready }
+func (f *fakeBot) Ready() bool { return f.ready }
+
+func (f *fakeBot) FetchMessagePreview(channelID, messageID string) (bot.MessagePreview, error) {
+	f.lastChannel = channelID
+	f.lastMessage = messageID
+	return f.preview, f.previewErr
+}
 
 func newTestServer(t *testing.T, botReady bool) *Server {
+	return newTestServerWithBot(t, &fakeBot{ready: botReady})
+}
+
+func newTestServerWithBot(t *testing.T, fb *fakeBot) *Server {
 	t.Helper()
 	src := filepath.Join("..", "..", "dbdata", "messages.db")
 	in, err := os.Open(src)
@@ -59,7 +76,7 @@ func newTestServer(t *testing.T, botReady bool) *Server {
 		t.Fatalf("write fixture image: %v", err)
 	}
 
-	return New(":0", database, fakeBot{ready: botReady}, "", "", downloads, false)
+	return New(":0", database, fb, "", "", downloads, false)
 }
 
 func doGET(t *testing.T, s *Server, path string) (*http.Response, []byte) {
@@ -123,6 +140,40 @@ func TestLeaderboard(t *testing.T) {
 		if *out.Rows[i-1].Roundness < *out.Rows[i].Roundness {
 			t.Error("not descending")
 		}
+	}
+}
+
+// TestLeaderboardIncludesAuthorName checks the leaderboard enriches rows with
+// the author's cached name (so the UI can show a name, not a bare snowflake).
+func TestLeaderboardIncludesAuthorName(t *testing.T) {
+	s := newTestServer(t, true)
+	res, body := doGET(t, s, "/api/leaderboard?order=max&n=50")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", res.StatusCode, body)
+	}
+	var out struct {
+		Rows []map[string]any `json:"rows"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Rows) == 0 {
+		t.Skip("no leaderboard rows in fixture")
+	}
+	// Every row carries an author_name key (may be empty when a row's author
+	// has no cached discordusers entry), and at least one is non-empty in the
+	// fixture — proving the join populated it.
+	anyNamed := false
+	for _, row := range out.Rows {
+		if _, ok := row["author_name"]; !ok {
+			t.Errorf("row missing author_name key: %+v", row)
+		}
+		if name, _ := row["author_name"].(string); name != "" {
+			anyNamed = true
+		}
+	}
+	if !anyNamed {
+		t.Error("no leaderboard row had a resolved author_name")
 	}
 }
 
@@ -242,6 +293,56 @@ func TestGetMessageBadID(t *testing.T) {
 	res, _ := doGET(t, s, "/api/messages/not-a-number")
 	if res.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", res.StatusCode)
+	}
+}
+
+func TestMessagePreview(t *testing.T) {
+	fb := &fakeBot{
+		ready: true,
+		preview: bot.MessagePreview{
+			MessageID:   "42",
+			ChannelID:   "99",
+			AuthorName:  "baker joe",
+			Content:     "fresh loaf",
+			TimestampMs: 1720000000000,
+			ImageURLs:   []string{"https://cdn.example/loaf.png?ex=abc"},
+		},
+	}
+	s := newTestServerWithBot(t, fb)
+	res, body := doGET(t, s, "/api/messages/42/preview?channel_id=99")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", res.StatusCode, body)
+	}
+	// The handler must pass through the ids to the bot fetch.
+	if fb.lastChannel != "99" || fb.lastMessage != "42" {
+		t.Errorf("fetched (%q,%q), want (99,42)", fb.lastChannel, fb.lastMessage)
+	}
+	var out struct {
+		AuthorName string   `json:"author_name"`
+		Content    string   `json:"content"`
+		ImageURLs  []string `json:"image_urls"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.AuthorName != "baker joe" || out.Content != "fresh loaf" || len(out.ImageURLs) != 1 {
+		t.Errorf("preview mismatch: %+v", out)
+	}
+}
+
+func TestMessagePreviewRequiresChannel(t *testing.T) {
+	s := newTestServer(t, true)
+	res, _ := doGET(t, s, "/api/messages/42/preview")
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (missing channel_id)", res.StatusCode)
+	}
+}
+
+func TestMessagePreviewBotNotReady(t *testing.T) {
+	s := newTestServerWithBot(t, &fakeBot{ready: false})
+	res, _ := doGET(t, s, "/api/messages/42/preview?channel_id=99")
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", res.StatusCode)
 	}
 }
 

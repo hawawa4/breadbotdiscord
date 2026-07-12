@@ -179,10 +179,12 @@ func (d *DB) GetStatsSummary() (StatsSummary, error) {
 }
 
 // RoundnessPoint is one point in a user's roundness history: a 1-based index
-// (most recent first) and the roundness value.
+// (most recent first), the roundness value, and the source message so the
+// frontend can link a plotted point back to its Discord message (for preview).
 type RoundnessPoint struct {
 	Index     int
 	Roundness float64
+	Message   Message
 }
 
 // GetRoundnessHistory returns the last 50 roundness values for a user, ordered
@@ -211,7 +213,7 @@ func (d *DB) GetRoundnessHistory(userID int64) ([]RoundnessPoint, error) {
 		if err != nil {
 			return nil, fmt.Errorf("db: scan history row: %w", err)
 		}
-		result = append(result, RoundnessPoint{Index: i, Roundness: m.Roundness.Float64})
+		result = append(result, RoundnessPoint{Index: i, Roundness: m.Roundness.Float64, Message: m})
 		i++
 	}
 	return result, rows.Err()

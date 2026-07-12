@@ -45,13 +45,12 @@
   <div class="card">
     <table>
       <thead>
-        <tr><th>Name</th><th>ID</th></tr>
+        <tr><th>Name</th></tr>
       </thead>
       <tbody>
         {#each rows as u}
           <tr>
             <td><a href={href(`/users/${u.author_id}`)}>{displayName(u)}</a></td>
-            <td class="muted">{u.author_id}</td>
           </tr>
         {/each}
       </tbody>

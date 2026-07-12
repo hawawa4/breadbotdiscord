@@ -175,9 +175,20 @@ func (s *Server) handleUserRoundness(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
+	// Each history point carries its source message (as a messageDTO) so the
+	// frontend can preview the bot's reply for a clicked chart point, exactly
+	// like a leaderboard row.
 	points := make([]map[string]any, len(history))
 	for i, p := range history {
-		points[i] = map[string]any{"index": p.Index, "roundness": p.Roundness}
+		dto := toMessageDTO(p.Message)
+		points[i] = map[string]any{
+			"index":                 p.Index,
+			"roundness":             p.Roundness,
+			"replymessage_id":       strconv.FormatInt(dto.ReplyMessageID, 10),
+			"channel_id":            strconv.FormatInt(dto.ChannelID, 10),
+			"replymessage_jump_url": dto.ReplyMessageJumpURL,
+			"annotated_image":       dto.AnnotatedImage,
+		}
 	}
 	resp["history"] = points
 

@@ -5,7 +5,10 @@
   import MessagePreview from '../components/MessagePreview.svelte'
 
   let { id } = $props()
-  let previewMsg = $state(null) // message DTO open in the preview modal
+  // selected: the message (leaderboard-shaped: replymessage_id / channel_id /
+  // replymessage_jump_url) whose preview is shown inline. Set by the best/worst
+  // card buttons or by clicking a point on the roundness chart.
+  let selected = $state(null)
 
   let user = $state(null)
   let roundness = $state(null)
@@ -44,7 +47,6 @@
 </script>
 
 <h1>🧑‍🍳 {name}</h1>
-<p class="muted" style="margin-top:-0.5rem">ID {id}</p>
 
 {#if loading}
   <div class="state">Loading…</div>
@@ -67,14 +69,12 @@
           >
             <img class="hero" src={imageURL('predictions', m.annotated_image)} alt="bread" />
           </a>
-        {:else if m}
-          <p class="muted">No image saved for this bread.</p>
-        {:else}
+        {:else if !m}
           <p class="muted">No scored breads yet.</p>
         {/if}
         {#if m}
           <div class="controls" style="gap:0.75rem">
-            <button class="link" onclick={() => (previewMsg = m)}>preview message</button>
+            <button class="link" onclick={() => (selected = m)}>preview message</button>
           </div>
         {/if}
       </div>
@@ -86,18 +86,21 @@
     {#if history.length === 0}
       <p class="muted">No history yet.</p>
     {:else}
-      <RoundnessChart {history} />
+      <RoundnessChart {history} onSelect={(p) => (selected = p)} />
+      <p class="muted hint">Click a point to preview that bread's message.</p>
     {/if}
   </div>
 {/if}
 
-{#if previewMsg}
-  <MessagePreview
-    messageId={previewMsg.replymessage_id}
-    channelId={previewMsg.channel_id}
-    jumpUrl={previewMsg.replymessage_jump_url}
-    onClose={() => (previewMsg = null)}
-  />
+{#if selected}
+  {#key selected}
+    <MessagePreview
+      messageId={selected.replymessage_id}
+      channelId={selected.channel_id}
+      jumpUrl={selected.replymessage_jump_url}
+      onClose={() => (selected = null)}
+    />
+  {/key}
 {/if}
 
 <style>
@@ -113,5 +116,9 @@
     border: 1px solid var(--border);
     margin: 0.75rem 0;
     display: block;
+  }
+  .hint {
+    margin: 0.5rem 0 0;
+    font-size: 0.82rem;
   }
 </style>

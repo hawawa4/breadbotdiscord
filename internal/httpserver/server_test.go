@@ -224,6 +224,15 @@ func TestUserRoundness(t *testing.T) {
 	if len(out.History) != 10 {
 		t.Errorf("history len = %d, want 10", len(out.History))
 	}
+	// Each history point carries its source message ids so the frontend can
+	// preview a clicked chart point.
+	for i, p := range out.History {
+		for _, k := range []string{"index", "roundness", "replymessage_id", "channel_id"} {
+			if _, ok := p[k]; !ok {
+				t.Errorf("history[%d] missing %q key", i, k)
+			}
+		}
+	}
 }
 
 func TestUserRoundnessUnknownUser(t *testing.T) {

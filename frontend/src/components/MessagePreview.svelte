@@ -4,7 +4,11 @@
   // messageId + channelId identify the message to fetch from the bot (we point
   // this at the bot's reply, which carries the verdict text + annotated image).
   // jumpUrl (optional) is shown as a link to open the message in Discord.
-  let { messageId, channelId, jumpUrl = null, onClose } = $props()
+  //
+  // inline (default false): when true, render just the faked message card with
+  // no modal backdrop / close button / Escape handler — for embedding directly
+  // in a page. onClose is then optional.
+  let { messageId, channelId, jumpUrl = null, onClose = null, inline = false } = $props()
 
   let preview = $state(null)
   let error = $state(null)
@@ -30,68 +34,77 @@
   )
 
   function onKey(e) {
-    if (e.key === 'Escape') onClose()
+    if (!inline && e.key === 'Escape' && onClose) onClose()
   }
 </script>
 
 <svelte:window on:keydown={onKey} />
 
-<div
-  class="backdrop"
-  role="button"
-  tabindex="-1"
-  onclick={onClose}
-  onkeydown={(e) => e.key === 'Enter' && onClose()}
->
-  <div class="modal" role="presentation" onclick={(e) => e.stopPropagation()}>
-    <button class="close" onclick={onClose} aria-label="Close">×</button>
-
-    {#if loading}
-      <div class="state">Loading message…</div>
-    {:else if error}
-      <div class="state error">
-        Couldn't load the message: {error}
-        {#if jumpUrl}
-          <p><a href={jumpUrl} target="_blank" rel="noreferrer">Open in Discord ↗</a></p>
-        {/if}
-      </div>
-    {:else if preview}
-      <article class="msg">
-        <div class="head">
-          {#if preview.author_avatar}
-            <img class="avatar" src={preview.author_avatar} alt="" />
-          {:else}
-            <div class="avatar placeholder">🍞</div>
-          {/if}
-          <div class="who">
-            <span class="name">{preview.author_name || 'Unknown baker'}</span>
-            {#if when}<span class="ts">{when}</span>{/if}
-          </div>
-        </div>
-
-        {#if preview.content}
-          <p class="content">{preview.content}</p>
-        {/if}
-
-        {#if preview.image_urls && preview.image_urls.length}
-          <div class="images">
-            {#each preview.image_urls as url}
-              <img class="attachment" src={url} alt="attachment" />
-            {/each}
-          </div>
+{#snippet card()}
+  {#if loading}
+    <div class="state">Loading message…</div>
+  {:else if error}
+    <div class="state error">
+      Couldn't load the message: {error}
+      {#if jumpUrl}
+        <p><a href={jumpUrl} target="_blank" rel="noreferrer">Open in Discord ↗</a></p>
+      {/if}
+    </div>
+  {:else if preview}
+    <article class="msg">
+      <div class="head">
+        {#if preview.author_avatar}
+          <img class="avatar" src={preview.author_avatar} alt="" />
         {:else}
-          <p class="muted">No images in this message.</p>
+          <div class="avatar placeholder">🍞</div>
         {/if}
+        <div class="who">
+          <span class="name">{preview.author_name || 'Unknown baker'}</span>
+          {#if when}<span class="ts">{when}</span>{/if}
+        </div>
+      </div>
 
-        {#if jumpUrl}
-          <div class="foot">
-            <a href={jumpUrl} target="_blank" rel="noreferrer">Open in Discord ↗</a>
-          </div>
-        {/if}
-      </article>
-    {/if}
+      {#if preview.content}
+        <p class="content">{preview.content}</p>
+      {/if}
+
+      {#if preview.image_urls && preview.image_urls.length}
+        <div class="images">
+          {#each preview.image_urls as url}
+            <img class="attachment" src={url} alt="attachment" />
+          {/each}
+        </div>
+      {:else}
+        <p class="muted">No images in this message.</p>
+      {/if}
+
+      {#if jumpUrl}
+        <div class="foot">
+          <a href={jumpUrl} target="_blank" rel="noreferrer">Open in Discord ↗</a>
+        </div>
+      {/if}
+    </article>
+  {/if}
+{/snippet}
+
+{#if inline}
+  <div class="inline">
+    {@render card()}
   </div>
-</div>
+{:else}
+  <div
+    class="backdrop"
+    role="button"
+    tabindex="-1"
+    onclick={onClose}
+    onkeydown={(e) => e.key === 'Enter' && onClose()}
+  >
+    <div class="modal" role="presentation" onclick={(e) => e.stopPropagation()}>
+      <button class="close" onclick={onClose} aria-label="Close">×</button>
+      {@render card()}
+    </div>
+  </div>
+{/if}
 
 <style>
   .backdrop {
@@ -129,6 +142,10 @@
   }
   .close:hover {
     color: var(--text);
+  }
+  .inline {
+    /* Embedded card: no backdrop/chrome, just the faked message. */
+    display: block;
   }
   .msg {
     display: flex;

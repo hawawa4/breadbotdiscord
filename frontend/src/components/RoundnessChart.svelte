@@ -2,11 +2,15 @@
   import uPlot from 'uplot'
   import 'uplot/dist/uPlot.min.css'
 
-  // history: [{ index, roundness }], newest first (index 1 = most recent).
-  let { history } = $props()
+  // history: [{ index, roundness, ... }], newest first (index 1 = most recent).
+  // onSelect (optional): called with the clicked point's history item.
+  let { history, onSelect = null } = $props()
 
   let el
   let plot
+  // ordered = history sorted oldest → newest, so uPlot data index i maps back
+  // to ordered[i] for click handling.
+  let ordered = []
 
   function cssVar(name, fallback) {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -21,7 +25,7 @@
     if (!history || history.length === 0) return
 
     // Plot oldest → newest so the line reads left-to-right over time.
-    const ordered = [...history].sort((a, b) => b.index - a.index)
+    ordered = [...history].sort((a, b) => b.index - a.index)
     const xs = ordered.map((_, i) => i + 1)
     const ys = ordered.map((p) => p.roundness * 100)
 
@@ -33,8 +37,46 @@
       {
         width,
         height: 320,
-        cursor: { y: false },
+        // Snap the cursor to the nearest data point (no free-floating x line);
+        // hovering "locks" onto discrete points rather than continuous space.
+        cursor: {
+          y: false,
+          points: { size: 11 },
+          // dataIdx always returns the series' own nearest index, so the
+          // highlighted cursor point sits exactly on a plotted point.
+          dataIdx: (u, seriesIdx, hoveredIdx) => hoveredIdx,
+        },
         scales: { y: { range: [0, 100] } },
+        hooks: {
+          // Only register hover/click when the pointer is actually near a
+          // plotted point (within HIT_RADIUS px), not anywhere on the plot.
+          ready: [
+            (u) => {
+              if (!onSelect) return
+              const HIT_RADIUS = 14
+
+              // nearestHit returns the data index within HIT_RADIUS of the
+              // pointer, or null. Uses the snapped cursor idx + pixel distance.
+              const nearestHit = () => {
+                const i = u.cursor.idx
+                if (i == null || !ordered[i]) return null
+                const px = u.valToPos(u.data[0][i], 'x')
+                const py = u.valToPos(u.data[1][i], 'y')
+                const dx = u.cursor.left - px
+                const dy = u.cursor.top - py
+                return dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS ? i : null
+              }
+
+              u.over.addEventListener('mousemove', () => {
+                u.over.style.cursor = nearestHit() != null ? 'pointer' : 'default'
+              })
+              u.over.addEventListener('click', () => {
+                const i = nearestHit()
+                if (i != null) onSelect(ordered[i])
+              })
+            },
+          ],
+        },
         axes: [
           { stroke: text, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
           {

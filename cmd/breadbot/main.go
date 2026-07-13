@@ -96,6 +96,11 @@ func run() error {
 	// And didn't save the timestamps already
 	go discordBot.BackfillTimestamps()
 
+	// TEMPORARY HOTFIX (remove with internal/bot/replayhotfix.go): silently
+	// replay a window of already-posted bread messages into the DB when
+	// REPLAY_HOTFIX=1, to recover lost stats rows. No-op unless the env var is set.
+	go discordBot.ReplayHotfix()
+
 	// Block until interrupted.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

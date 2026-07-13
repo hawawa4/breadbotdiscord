@@ -10,7 +10,7 @@
     { path: "/", label: "Dashboard", match: "dashboard" },
     { path: "/leaderboard", label: "Leaderboard", match: "leaderboard" },
     { path: "/users", label: "Users", match: "users" },
-    // { path: '/gallery', label: 'Gallery', match: 'gallery' },
+    { path: "/gallery", label: "Gallery", match: "gallery" },
   ];
 </script>
 
@@ -38,8 +38,8 @@
     <Users />
   {:else if $route.name === "user"}
     <User id={$route.params.id} />
-    <!-- {:else if $route.name === "gallery"}
-    <Gallery /> -->
+  {:else if $route.name === "gallery"}
+    <Gallery />
   {/if}
 </main>
 

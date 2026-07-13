@@ -1,5 +1,6 @@
 <script>
   import { api } from '../lib/api.js'
+  import { formatDateTime } from '../lib/format.js'
 
   // messageId + channelId identify the message to fetch from the bot (we point
   // this at the bot's reply, which carries the verdict text + annotated image).
@@ -28,10 +29,8 @@
 
   load()
 
-  // Human-readable timestamp from unix ms, or "" if absent.
-  let when = $derived(
-    preview?.timestamp_ms ? new Date(preview.timestamp_ms).toLocaleString() : '',
-  )
+  // Human-readable timestamp from unix ms, or "" if absent. Day-first (EU).
+  let when = $derived(preview?.timestamp_ms ? formatDateTime(preview.timestamp_ms) : '')
 
   function onKey(e) {
     if (!inline && e.key === 'Escape' && onClose) onClose()

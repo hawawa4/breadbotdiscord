@@ -1,6 +1,7 @@
 <script>
   import uPlot from 'uplot'
   import 'uplot/dist/uPlot.min.css'
+  import { formatDate } from '../lib/format.js'
 
   // history: [{ index, roundness, ... }], newest first (index 1 = most recent).
   // onSelect (optional): called with the clicked point's history item.
@@ -87,7 +88,15 @@
           ],
         },
         axes: [
-          { stroke: text, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
+          {
+            stroke: text,
+            grid: { stroke: grid, width: 1 },
+            ticks: { stroke: grid },
+            // Force day-first tick labels on the time axis (splits are in
+            // seconds); uPlot's built-in time formatter is month-first (US).
+            // Left undefined on the index axis so uPlot renders plain numbers.
+            values: haveTime ? (u, splits) => splits.map((v) => formatDate(v * 1000)) : undefined,
+          },
           {
             stroke: text,
             grid: { stroke: grid, width: 1 },
@@ -100,7 +109,7 @@
           haveTime
             ? {
                 label: 'date',
-                value: (u, v) => (v == null ? '—' : new Date(v * 1000).toLocaleDateString()),
+                value: (u, v) => (v == null ? '—' : formatDate(v * 1000)),
               }
             : { label: 'n' },
           {
